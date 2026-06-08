@@ -21,7 +21,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     logger.warning("GEMINI_API_KEY not set — /explain will return mock responses")
 else:
-    genai.configure(api_key=GEMINI_API_KEY)
+    genai.configure(api_key="GEMINI_API_KEY")
     logger.info("Gemini configured successfully")
 
 app = FastAPI(
