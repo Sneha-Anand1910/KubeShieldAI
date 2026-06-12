@@ -1,0 +1,51 @@
+version: "3.8"
+services:
+
+  ingestion-service:
+    image: kubeshield/ingestion-service:v1
+    ports:
+      - "8001:8001"
+    networks:
+      - kubeshield-net
+
+  security-service:
+    image: shreyaspatil67/security-service:v1
+    ports:
+      - "8002:8002"
+    networks:
+      - kubeshield-net
+
+  scoring-service:
+    image: shreyaspatil67/scoring-service:v1
+    ports:
+      - "8003:8003"
+    networks:
+      - kubeshield-net
+
+  ai-service:
+    image: blason2108/kubeshield:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=GEMINI_API_KEY
+    networks:
+      - kubeshield-net
+
+  dashboard-service:
+    image: blason2108/kubeshield-dashboard:latest
+    ports:
+      - "8501:8501"
+    environment:
+      - SECURITY_SERVICE_URL=http://security-service:8002
+      - SCORING_SERVICE_URL=http://scoring-service:8003
+      - AI_SERVICE_URL=http://ai-service:8000
+    depends_on:
+      - security-service
+      - scoring-service
+      - ai-service
+    networks:
+      - kubeshield-net
+
+networks:
+  kubeshield-net:
+    driver: bridge
