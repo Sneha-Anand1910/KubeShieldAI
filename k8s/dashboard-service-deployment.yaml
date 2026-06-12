@@ -1,4 +1,4 @@
----
+git ---
 # ── ConfigMap — service URLs ───────────────────────────────────────────────
 apiVersion: v1
 kind: ConfigMap
