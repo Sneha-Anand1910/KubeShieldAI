@@ -1,0 +1,24 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: 10.140.134.1
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix:///var/run/containerd/containerd.sock
+  imagePullPolicy: IfNotPresent
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v1.36.1
+networking:
+  dnsDomain: cluster.local
+  podSubnet: 10.244.0.0/16
+  serviceSubnet: 10.96.0.0/12
+apiServer:
+  certSANs:
+  - "127.0.0.1"
+  - "localhost"
+  - "10.140.134.1"
+  extraArgs:
+    - name: "bind-address"
+      value: "0.0.0.0"
