@@ -1,44 +1,52 @@
-version: "3.8"
+version: '3.8'
+
 services:
 
+  # ── ingestion-service (Streamlit upload UI) ──────────────────────────────
   ingestion-service:
     image: sneha1910/ingestion-service:v1
     ports:
-      - "8001:8001"
+      - "8001:8501"   # external 8001 -> internal Streamlit port 8501
     networks:
       - kubeshield-net
 
+  # ── security-service (FastAPI /analyze) ──────────────────────────────────
   security-service:
     image: shreyaspatil67/security-service:v1
     ports:
-      - "8002:8002"
+      - "8002:8000"   # external 8002 -> internal uvicorn port 8000
     networks:
       - kubeshield-net
 
+  # ── scoring-service (FastAPI /score) ─────────────────────────────────────
   scoring-service:
     image: shreyaspatil67/scoring-service:v1
     ports:
-      - "8003:8003"
+      - "8003:8001"   # external 8003 -> internal uvicorn port 8001
     networks:
       - kubeshield-net
 
+  # ── ai-service (FastAPI /explain, calls Gemini) ──────────────────────────
   ai-service:
     image: blason2108/kubeshieldai:latest
     ports:
       - "8000:8000"
     environment:
-      - GEMINI_API_KEY= GEMINI_API_KEY
+      - GEMINI_API_KEY=GEMINI_API_KEY
     networks:
       - kubeshield-net
 
+  # ── dashboard-service (Streamlit main UI, orchestrates everything) ───────
   dashboard-service:
     image: blason2108/kubeshieldai-dashboard:latest
     ports:
       - "8501:8501"
     environment:
-      - SECURITY_SERVICE_URL=http://security-service:8002
-      - SCORING_SERVICE_URL=http://scoring-service:8003
+      # NOTE: these use INTERNAL container ports, not the external mapped ones
+      - SECURITY_SERVICE_URL=http://security-service:8000
+      - SCORING_SERVICE_URL=http://scoring-service:8001
       - AI_SERVICE_URL=http://ai-service:8000
+      - INGESTION_SERVICE_URL=http://ingestion-service:8501
     depends_on:
       - security-service
       - scoring-service
