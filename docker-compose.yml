@@ -37,7 +37,7 @@ services:
       - kubeshield-net
 
   # ── dashboard-service (Streamlit main UI, orchestrates everything) ───────
-  dashboard-service:
+  dashboard-service:  
     image: blason2108/kubeshieldai-dashboard:latest
     ports:
       - "8501:8501"

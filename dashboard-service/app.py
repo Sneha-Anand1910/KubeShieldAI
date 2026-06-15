@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 from datetime import datetime
+import yaml
 
 # ── Service URLs (k8s ClusterIP DNS) ──────────────────────────────────────
 SECURITY_SERVICE = os.getenv("SECURITY_SERVICE_URL", "http://security-service:8000")
@@ -203,9 +204,10 @@ def sev_badge(s: str) -> str:
 
 
 def call_security(yaml_text: str) -> dict:
+    parsed = yaml.safe_load(yaml_text)  # convert string -> dict
     r = requests.post(
         f"{SECURITY_SERVICE}/analyze",
-        json={"yaml_content": yaml_text},
+        json={"yaml_content": parsed},   # send dict, not string
         timeout=30,
     )
     r.raise_for_status()
