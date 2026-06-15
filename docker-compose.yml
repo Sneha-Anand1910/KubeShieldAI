@@ -32,7 +32,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - GEMINI_API_KEY=GEMINI_API_KEY # Pass Gemini API key from host env
+      - GEMINI_API_KEY=GEMINI_API_KEY
     networks:
       - kubeshield-net
 

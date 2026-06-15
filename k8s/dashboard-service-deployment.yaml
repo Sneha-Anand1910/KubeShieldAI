@@ -1,0 +1,64 @@
+git ---
+# ── ConfigMap — service URLs ───────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-config
+  namespace: kubeshield
+data:
+  SECURITY_SERVICE_URL: "http://security-service:8000"
+  SCORING_SERVICE_URL:  "http://scoring-service:8000"
+  AI_SERVICE_URL:       "http://ai-service:8000"
+
+---
+# ── Deployment ─────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard-service
+  namespace: kubeshield
+  labels:
+    app: dashboard-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard-service
+  template:
+    metadata:
+      labels:
+        app: dashboard-service
+    spec:
+      containers:
+        - name: dashboard-service
+          image: kubeshield/dashboard-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8501
+          envFrom:
+            - configMapRef:
+                name: dashboard-config
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+# ── Service (NodePort — the only service users open in browser) ────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-service
+  namespace: kubeshield
+spec:
+  selector:
+    app: dashboard-service
+  ports:
+    - protocol: TCP
+      port: 8501
+      targetPort: 8501
+      nodePort: 30080   # access at http://<node-ip>:30080
+  type: NodePort

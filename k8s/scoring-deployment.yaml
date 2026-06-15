@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scoring-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scoring-service
+  template:
+    metadata:
+      labels:
+        app: scoring-service
+    spec:
+      containers:
+      - name: scoring-service
+        image: shreyaspatil67/scoring-service:v1
+        ports:
+        - containerPort: 8001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scoring-service
+spec:
+  selector:
+    app: scoring-service
+  ports:
+  - port: 8001
+    targetPort: 8001
+  type: ClusterIP
