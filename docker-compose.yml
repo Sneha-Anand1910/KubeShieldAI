@@ -2,7 +2,7 @@ version: "3.8"
 services:
 
   ingestion-service:
-    image: kubeshield/ingestion-service:v1
+    image: sneha1910/ingestion-service:v1
     ports:
       - "8001:8001"
     networks:
@@ -23,16 +23,16 @@ services:
       - kubeshield-net
 
   ai-service:
-    image: blason2108/kubeshield:latest
+    image: blason2108/kubeshieldai:latest
     ports:
       - "8000:8000"
     environment:
-      - GEMINI_API_KEY=GEMINI_API_KEY
+      - GEMINI_API_KEY= GEMINI_API_KEY
     networks:
       - kubeshield-net
 
   dashboard-service:
-    image: blason2108/kubeshield-dashboard:latest
+    image: blason2108/kubeshieldai-dashboard:latest
     ports:
       - "8501:8501"
     environment:
