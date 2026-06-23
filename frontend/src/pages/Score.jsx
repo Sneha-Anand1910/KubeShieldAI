@@ -1,43 +1,29 @@
 import React from 'react'
-import { RadialBarChart, RadialBar, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts'
-import { mockFindings, severityColors, moduleColors } from '../utils/mockData'
-import { mockScanHistory } from '../utils/mockData'
+import { BarChart3 } from 'lucide-react'
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
-const overallScore = 74
+const SEV_COLORS = { Critical: '#FF4D6D', High: '#F59E0B', Medium: '#A78BFA', Low: '#10B981' }
+const CHECK_COLORS = { 'Pod Security': '#00D4FF', 'RBAC': '#A78BFA', 'Secrets': '#F59E0B', 'Service Exposure': '#10B981' }
 
-const severityCounts = mockFindings.reduce((acc, f) => {
-  acc[f.severity] = (acc[f.severity] || 0) + 1
-  return acc
-}, {})
-
-const pieData = Object.entries(severityCounts).map(([name, value]) => ({ name, value, color: severityColors[name] }))
-
-const moduleData = Object.entries(
-  mockFindings.reduce((acc, f) => { acc[f.module] = (acc[f.module] || 0) + 1; return acc }, {})
-).map(([name, count]) => ({ name, count, fill: moduleColors[name] }))
-
-const trendData = [...mockScanHistory].reverse().map(s => ({
-  date: new Date(s.timestamp).toLocaleDateString('en', { month: 'short', day: 'numeric' }),
-  score: s.score,
-}))
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{label}</div>
+      {payload.map((p, i) => <div key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: p.color || 'var(--cyan)' }}>{p.name}: {p.value}</div>)}
+    </div>
+  )
+}
 
 const ScoreGauge = ({ score }) => {
   const color = score > 70 ? '#FF4D6D' : score > 40 ? '#F59E0B' : '#10B981'
   const circumference = 2 * Math.PI * 70
   const offset = circumference - (score / 100) * circumference * 0.75
-
   return (
     <div style={{ position: 'relative', width: 200, height: 160, margin: '0 auto' }}>
       <svg width="200" height="160" viewBox="0 0 200 160">
-        <circle cx="100" cy="120" r="70" fill="none" stroke="var(--bg-hover)" strokeWidth="10"
-          strokeDasharray={`${circumference * 0.75} ${circumference * 0.25}`}
-          strokeDashoffset={circumference * 0.125}
-          strokeLinecap="round" transform="rotate(180 100 120)" />
-        <circle cx="100" cy="120" r="70" fill="none" stroke={color} strokeWidth="10"
-          strokeDasharray={`${circumference - offset} ${offset}`}
-          strokeDashoffset={circumference * 0.125}
-          strokeLinecap="round" transform="rotate(180 100 120)"
-          style={{ transition: 'stroke-dasharray 1s ease', filter: `drop-shadow(0 0 8px ${color})` }} />
+        <circle cx="100" cy="120" r="70" fill="none" stroke="var(--bg-hover)" strokeWidth="10" strokeDasharray={`${circumference * 0.75} ${circumference * 0.25}`} strokeDashoffset={circumference * 0.125} strokeLinecap="round" transform="rotate(180 100 120)" />
+        <circle cx="100" cy="120" r="70" fill="none" stroke={color} strokeWidth="10" strokeDasharray={`${circumference - offset} ${offset}`} strokeDashoffset={circumference * 0.125} strokeLinecap="round" transform="rotate(180 100 120)" style={{ transition: 'stroke-dasharray 1s ease', filter: `drop-shadow(0 0 8px ${color})` }} />
       </svg>
       <div style={{ position: 'absolute', bottom: 16, left: 0, right: 0, textAlign: 'center' }}>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 42, fontWeight: 600, color, lineHeight: 1 }}>{score}</div>
@@ -47,66 +33,60 @@ const ScoreGauge = ({ score }) => {
   )
 }
 
-const CustomTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null
-  return (
-    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{label}</div>
-      {payload.map((p, i) => (
-        <div key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: p.color || 'var(--cyan)' }}>
-          {p.name}: {p.value}
+export default function Score({ scanResult, onNav }) {
+  if (!scanResult?.score) {
+    return (
+      <div style={{ padding: '32px 40px', animation: 'fade-up 0.3s ease' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--cyan)', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 8 }}>03 · Scoring engine</div>
+        <h1 style={{ fontSize: 28, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 24 }}>Risk score</h1>
+        <div style={{ padding: '48px', textAlign: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)' }}>
+          <BarChart3 size={40} color="var(--text-muted)" style={{ marginBottom: 16 }} />
+          <div style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 16 }}>Run a scan first to see scoring</div>
+          <button onClick={() => onNav('ingest')} style={{ padding: '10px 24px', background: 'var(--cyan)', color: '#080C14', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>Go to Ingest →</button>
         </div>
-      ))}
-    </div>
-  )
-}
+      </div>
+    )
+  }
 
-const StatCard = ({ label, value, sub, color }) => (
-  <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '20px' }}>
-    <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>{label}</div>
-    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 28, fontWeight: 600, color: color || 'var(--text-primary)', lineHeight: 1 }}>{value}</div>
-    {sub && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>{sub}</div>}
-  </div>
-)
+  const { score, findings } = scanResult
+  const pieData = Object.entries(score.severity_counts || {}).map(([name, value]) => ({ name, value, color: SEV_COLORS[name] })).filter(d => d.value > 0)
+  const moduleData = Object.entries(score.breakdown || {}).map(([name, v]) => ({ name, count: v.findings_count, fill: CHECK_COLORS[name] || 'var(--cyan)' }))
 
-export default function Score() {
   return (
     <div style={{ padding: '32px 40px', overflow: 'auto', animation: 'fade-up 0.3s ease' }}>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--cyan)', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 8 }}>
-        03 · Scoring engine
-      </div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--cyan)', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 8 }}>03 · Scoring engine</div>
       <h1 style={{ fontSize: 28, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 24 }}>Risk score</h1>
 
-      {/* Top row: gauge + stats */}
       <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 20, marginBottom: 20 }}>
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '24px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <ScoreGauge score={overallScore} />
+          <ScoreGauge score={score.risk_score} />
           <div style={{ marginTop: 12, textAlign: 'center' }}>
-            <span style={{ fontSize: 12, color: 'var(--coral)', background: 'var(--coral-dim)', padding: '3px 10px', borderRadius: 99, border: '1px solid rgba(255,77,109,0.3)' }}>
-              High risk
-            </span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', marginRight: 8 }}>Grade: {score.grade}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{score.risk_level}</span>
           </div>
         </div>
-
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <StatCard label="Total findings"    value={mockFindings.length}  sub="across all modules"             color="var(--text-primary)" />
-          <StatCard label="Critical + high"   value="5"  sub="require immediate action"        color="var(--coral)" />
-          <StatCard label="Resources scanned" value="48" sub="pods, deployments, services…"    color="var(--text-primary)" />
-          <StatCard label="Namespaces"        value="4"  sub="dev-sim, prod-sim, kubeshield…"  color="var(--text-primary)" />
+          {[
+            { label: 'Total findings',   value: score.total_findings,                color: 'var(--text-primary)' },
+            { label: 'Critical + High',  value: (score.severity_counts?.Critical || 0) + (score.severity_counts?.High || 0), color: 'var(--coral)' },
+            { label: 'Weighted score',   value: score.weighted_total,                color: 'var(--text-primary)' },
+            { label: 'Checks evaluated', value: (score.checks_evaluated || []).length, color: 'var(--text-primary)' },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '20px' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>{label}</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 28, fontWeight: 600, color, lineHeight: 1 }}>{value}</div>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Charts row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
-        {/* Severity donut */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '24px' }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 16 }}>Severity breakdown</div>
           <ResponsiveContainer width="100%" height={180}>
             <PieChart>
               <Pie data={pieData} innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value">
-                {pieData.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} stroke="transparent" />
-                ))}
+                {pieData.map((entry, i) => <Cell key={i} fill={entry.color} stroke="transparent" />)}
               </Pie>
               <Tooltip content={<CustomTooltip />} />
             </PieChart>
@@ -115,42 +95,43 @@ export default function Score() {
             {pieData.map(d => (
               <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <div style={{ width: 8, height: 8, borderRadius: 2, background: d.color }} />
-                <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'capitalize' }}>{d.name} ({d.value})</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{d.name} ({d.value})</span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Module bar */}
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '24px' }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 16 }}>Findings by module</div>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart data={moduleData} layout="vertical" barCategoryGap="30%">
               <XAxis type="number" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} axisLine={false} tickLine={false} width={55} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} axisLine={false} tickLine={false} width={90} />
               <Tooltip content={<CustomTooltip />} />
               <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                {moduleData.map((entry, i) => (
-                  <Cell key={i} fill={entry.fill} />
-                ))}
+                {moduleData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
-
-        {/* Score trend */}
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '24px' }}>
-          <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 16 }}>Risk score trend</div>
-          <ResponsiveContainer width="100%" height={180}>
-            <LineChart data={trendData}>
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
-              <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} width={28} />
-              <Tooltip content={<CustomTooltip />} />
-              <Line type="monotone" dataKey="score" stroke="var(--cyan)" strokeWidth={2} dot={{ fill: 'var(--cyan)', r: 3, strokeWidth: 0 }} name="score" />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
       </div>
+
+      {/* Top priorities */}
+      {score.top_priorities?.length > 0 && (
+        <div style={{ marginTop: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '24px' }}>
+          <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 16 }}>Top priorities to fix</div>
+          {score.top_priorities.map((p, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: i < score.top_priorities.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', minWidth: 20 }}>#{p.rank}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>{p.Issue}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.resource} · effort: {p.effort}</div>
+              </div>
+              <span style={{ fontSize: 11, color: SEV_COLORS[p.Severity] || 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{p.Severity}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
