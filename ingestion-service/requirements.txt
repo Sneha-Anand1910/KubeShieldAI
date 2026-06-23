@@ -1,6 +1,6 @@
-streamlit==1.32.0
 fastapi==0.110.0
 uvicorn==0.29.0
 pyyaml==6.0.1
 requests==2.31.0
 python-multipart==0.0.9
+kubernetes==29.0.0
