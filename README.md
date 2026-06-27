@@ -5,6 +5,11 @@ KubeShieldAI/
 │
 ├── backend/
 │   │
+│   ├── ingestion-service/               ── IMAGE: kubeshieldai/ingestion-service:v1
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── app.py                       ← FastAPI: kubeconfig upload + live cluster connect + PyYAML fallback
+│   │
 │   ├── security-service/               ── IMAGE: kubeshieldai/security-service:v1
 │   │   ├── Dockerfile
 │   │   ├── requirements.txt
@@ -12,14 +17,14 @@ KubeShieldAI/
 │   │   ├── models/
 │   │   │   └── finding.py
 │   │   └── analyzers/
-│   │       ├── rbac/                   
+│   │       ├── rbac/
 │   │       │   ├── analyzer.py
 │   │       │   └── rules/
 │   │       │       ├── wildcard_check.py
 │   │       │       ├── cluster_admin.py
 │   │       │       ├── privilege_esc.py
 │   │       │       └── default_sa.py
-│   │       ├── pod/                    
+│   │       ├── pod/
 │   │       │   ├── analyzer.py
 │   │       │   └── rules/
 │   │       │       ├── privileged.py
@@ -27,13 +32,13 @@ KubeShieldAI/
 │   │       │       ├── capabilities.py
 │   │       │       ├── host_access.py
 │   │       │       └── resource_limits.py
-│   │       ├── secret/                 
+│   │       ├── secret/
 │   │       │   ├── analyzer.py
 │   │       │   └── rules/
 │   │       │       ├── hardcoded.py
 │   │       │       ├── env_exposure.py
 │   │       │       └── rbac_access.py
-│   │       └── network/                
+│   │       └── network/
 │   │           ├── analyzer.py
 │   │           └── rules/
 │   │               ├── missing_netpol.py
@@ -42,18 +47,16 @@ KubeShieldAI/
 │   ├── scoring-service/                ── IMAGE: kubeshieldai/scoring-service:v1
 │   │   ├── Dockerfile
 │   │   ├── requirements.txt
-│   │   └── app.py                      ← CVSS-inspired scoring + compound scoring
-│   │       └── scorer/
-│   │           ├── base_score.py       ← assigns 0-10 per rule
-│   │           ├── compound.py         ← elevates score for chained findings
-│   │           └── exploit_path.py     ← detects privilege escalation chains
+│   │   ├── app.py
+│   │   └── scorer/
+│   │       ├── base_score.py
+│   │       ├── compound.py
+│   │       └── exploit_path.py
 │   │
 │   └── ai-service/                     ── IMAGE: kubeshieldai/ai-service:v1
 │       ├── Dockerfile
 │       ├── requirements.txt
-│       └── app.py                      ← Gemini API + /explain endpoint
-│
-│
+│       └── app.py
 │
 ├── frontend/                           ── IMAGE: kubeshieldai/frontend:v1
 │   ├── Dockerfile
@@ -76,6 +79,7 @@ KubeShieldAI/
 ├── k8s/
 │   ├── namespace.yaml
 │   ├── secret.yaml
+│   ├── ingestion-service-deployment.yaml
 │   ├── security-service-deployment.yaml
 │   ├── scoring-service-deployment.yaml
 │   ├── ai-service-deployment.yaml
