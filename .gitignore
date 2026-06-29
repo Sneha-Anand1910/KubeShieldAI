@@ -7,3 +7,5 @@ __pycache__/
 restart/
 *.egg-info/
 frontend/node_modules/
+test_pod.py
+faulty-nginx.tar
