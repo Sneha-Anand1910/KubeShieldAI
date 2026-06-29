@@ -8,7 +8,7 @@ from analyzers.pod.analyzer import analyze_pod
 app = FastAPI(title="KubeShield Security Service")
 
 class YAMLInput(BaseModel):
-    yaml_content: dict[str, Any]
+    yaml_content: dict[str, Any] 
 
 @app.post("/analyze")
 def analyze(body: YAMLInput):
