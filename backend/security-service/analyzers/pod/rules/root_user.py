@@ -1,4 +1,4 @@
-from models.findings import make_finding
+from models.finding import make_finding
 def check_root_user(container):
     findings = []
     security_context = container.get("securityContext", {})
