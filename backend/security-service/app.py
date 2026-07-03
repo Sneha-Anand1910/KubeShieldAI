@@ -198,8 +198,8 @@ async def analyze_pod_endpoint(req: AnalyzeRequest):
 async def analyze_secret_endpoint(req: AnalyzeRequest):
     """Run Secret analysis only."""
     try:
-        v1, _, _ = load_clients(req.kubeconfig_content)
-        findings = analyze_secret(v1)
+        v1, rbac_v1, _ = load_clients(req.kubeconfig_content)
+        findings = analyze_secret(v1,rbac_v1)
         return {
             "module":   "secret",
             "findings": [f.model_dump() for f in findings],

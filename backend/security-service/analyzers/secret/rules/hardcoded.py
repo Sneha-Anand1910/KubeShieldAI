@@ -23,7 +23,17 @@ def check(resource):
 
     spec = resource.get("spec", {})
 
-    containers = spec.get("containers", [])
+    # Pod
+    if "containers" in spec:
+        containers = spec.get("containers", [])
+
+    # Deployment / StatefulSet / DaemonSet / Job / CronJob
+    else:
+        containers = (
+            spec.get("template", {})
+                .get("spec", {})
+                .get("containers", [])
+        )
 
     for container in containers:
 
