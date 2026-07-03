@@ -13,7 +13,7 @@ Usage:
 
 import logging
 from kubernetes.client import RbacAuthorizationV1Api
-from models.finding import Finding
+from models.findings import Finding, make_finding
 
 from analyzers.rbac.rules import (
     wildcard_check,
@@ -25,7 +25,7 @@ from analyzers.rbac.rules import (
 logger = logging.getLogger("rbac-analyzer")
 
 
-def analyze(rbac_v1: RbacAuthorizationV1Api) -> list[Finding]:
+def analyze_rbac(rbac_v1: RbacAuthorizationV1Api) -> list[Finding]:
     """
     Run all RBAC security checks against the live cluster.
 
