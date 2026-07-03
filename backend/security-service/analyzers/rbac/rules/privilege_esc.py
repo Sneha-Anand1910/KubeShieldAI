@@ -11,7 +11,7 @@ Rules:
 """
 
 from kubernetes.client import RbacAuthorizationV1Api
-from models.finding import Finding, make_finding
+from models.findings import Finding, make_finding
 
 SYSTEM_PREFIXES = ["system:", "kubeadm:", "calico", "flannel"]
 

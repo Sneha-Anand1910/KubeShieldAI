@@ -11,7 +11,7 @@ Rules:
 """
 
 from kubernetes.client import RbacAuthorizationV1Api
-from models.finding import Finding, make_finding
+from models.findings import Finding, make_finding
 
 # Skip built-in system roles — they are intentionally permissive
 SYSTEM_PREFIXES = [

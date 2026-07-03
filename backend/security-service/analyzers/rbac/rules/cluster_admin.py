@@ -11,7 +11,7 @@ Rules:
 """
 
 from kubernetes.client import RbacAuthorizationV1Api
-from models.finding import Finding, make_finding
+from models.findings import Finding, make_finding
 
 # Namespaces where cluster-admin on a SA is expected/acceptable
 SAFE_NAMESPACES = {
