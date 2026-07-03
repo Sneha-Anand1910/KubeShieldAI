@@ -72,32 +72,44 @@ async def ingest_yaml(file: UploadFile = File(...)):
 @app.post("/api/analyze")
 async def analyze(body: dict):
     async with httpx.AsyncClient(timeout=30) as client:
-        # Step 1: send to security-service
+        # Step 1 — security-service
         try:
-            sec_r = await client.post(f"{SECURITY_URL}/analyze", json=body)
+            kubeconfig_path = os.path.expanduser("~/.kube/config")
+            with open(kubeconfig_path, "r") as f:
+                kubeconfig_str = f.read()
+
+            sec_r = await client.post(
+                f"{SECURITY_URL}/analyze",
+                json={"kubeconfig_content": kubeconfig_str}
+            )
             sec_r.raise_for_status()
             security_result = sec_r.json()
         except httpx.ConnectError:
             raise HTTPException(503, "security-service is not running")
 
-        # Step 2: send findings to scoring-service
+        # Step 2 — scoring-service
         try:
-            score_r = await client.post(f"{SCORING_URL}/score", json={
-                "findings": security_result["findings"],
-                "summary":  security_result["summary"],
-            })
+            score_r = await client.post(
+                f"{SCORING_URL}/score",
+                json={
+                    "findings": security_result["findings"],
+                    "summary":  security_result.get("by_severity", {}),
+                }
+            )
             score_r.raise_for_status()
             scoring_result = score_r.json()
         except httpx.ConnectError:
             raise HTTPException(503, "scoring-service is not running")
 
-    # Return everything the frontend needs in one response
+    # Step 3 — return combined result to frontend
     return {
-        "findings":  security_result["findings"],
-        "summary":   security_result["summary"],
-        "score":     scoring_result,
+        "findings":     security_result["findings"],
+        "cluster_info": security_result.get("cluster_info", {}),
+        "total_issues": security_result.get("total_issues", 0),
+        "by_severity":  security_result.get("by_severity", {}),
+        "by_module":    security_result.get("by_module", {}),
+        "score":        scoring_result,
     }
-
 
 # ── /api/ai/explain ───────────────────────────────────────────────────────
 # React AI page sends findings, gateway forwards to ai-service → Gemini
