@@ -1,4 +1,4 @@
-from models.findings import make_finding
+from models.finding import make_finding
 
 SYSTEM_NAMESPACES = {
     "kube-system",
