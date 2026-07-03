@@ -88,18 +88,12 @@ async def analyze(body: dict):
             raise HTTPException(503, "security-service is not running")
 
         # Step 2 — scoring-service
-        try:
-            score_r = await client.post(
-                f"{SCORING_URL}/score",
-                json={
-                    "findings": security_result["findings"],
-                    "summary":  security_result.get("by_severity", {}),
-                }
-            )
-            score_r.raise_for_status()
-            scoring_result = score_r.json()
-        except httpx.ConnectError:
-            raise HTTPException(503, "scoring-service is not running")
+        # ── Scoring bypassed for now ──────────────────────────────
+        # try:
+        #     score_r = await client.post(f"{SCORING_URL}/score", ...)
+        #     scoring_result = score_r.json()
+        # except httpx.ConnectError:
+        #     raise HTTPException(503, "scoring-service is not running")
 
     # Step 3 — return combined result to frontend
     return {
@@ -108,7 +102,7 @@ async def analyze(body: dict):
         "total_issues": security_result.get("total_issues", 0),
         "by_severity":  security_result.get("by_severity", {}),
         "by_module":    security_result.get("by_module", {}),
-        "score":        scoring_result,
+        "score":        None,
     }
 
 # ── /api/ai/explain ───────────────────────────────────────────────────────
