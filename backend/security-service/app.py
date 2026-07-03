@@ -41,9 +41,9 @@ from models.findings import Finding
 from analyzers.rbac.analyzer import analyze_rbac
 from analyzers.pod.analyzer import analyze_pod
 
-# Uncomment these as Blason (secret) and Shreyas (network) finish their modules
-# from analyzers.secret.analyzer  import analyze as analyze_secret
-# from analyzers.network.analyzer import analyze as analyze_network
+
+from analyzers.secret.analyzer  import analyze as analyze_secret
+from analyzers.network.analyzer import analyze as analyze_network
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("security-service")
@@ -138,14 +138,15 @@ def root():
         "service":   "KubeShield Security Service",
         "version":   "1.0.0",
         "endpoints": {
-            "health":        "GET  /health",
-            "analyze_rbac":  "POST /analyze/rbac",
-            "analyze_pod":   "POST /analyze/pod",
-            "analyze_all":   "POST /analyze",
-            "docs":          "GET  /docs",
+            "health":           "GET  /health",
+            "analyze_rbac":     "POST /analyze/rbac",
+            "analyze_pod":      "POST /analyze/pod",
+            "analyze_secret":   "POST /analyze/secret",    
+            "analyze_network":  "POST /analyze/network",   
+            "analyze_all":      "POST /analyze",
+            "docs":             "GET  /docs",
         }
     }
-
 
 @app.get("/health")
 def health():
@@ -162,7 +163,7 @@ async def analyze_rbac_endpoint(req: AnalyzeRequest):
         findings = analyze_rbac(rbac_v1)
         return {
             "module":   "rbac",
-            "findings": findings,
+            "findings": [f.model_dump() for f in findings],
             "total":    len(findings),
             **summarize(findings),
         }
@@ -182,7 +183,7 @@ async def analyze_pod_endpoint(req: AnalyzeRequest):
         findings = analyze_pod(v1)
         return {
             "module":   "pod",
-            "findings": findings,
+            "findings": [f.model_dump() for f in findings],
             "total":    len(findings),
             **summarize(findings),
         }
@@ -191,6 +192,45 @@ async def analyze_pod_endpoint(req: AnalyzeRequest):
         raise HTTPException(status_code=502, detail=f"Kubernetes API error: {e.reason}")
     except Exception as e:
         logger.error(f"Pod analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/analyze/secret")
+async def analyze_secret_endpoint(req: AnalyzeRequest):
+    """Run Secret analysis only."""
+    try:
+        v1, _, _ = load_clients(req.kubeconfig_content)
+        findings = analyze_secret(v1)
+        return {
+            "module":   "secret",
+            "findings": [f.model_dump() for f in findings],
+            "total":    len(findings),
+            **summarize(findings),
+        }
+    except ApiException as e:
+        logger.error(f"Kubernetes API error: {e}")
+        raise HTTPException(status_code=502, detail=f"Kubernetes API error: {e.reason}")
+    except Exception as e:
+        logger.error(f"Secret analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/analyze/network")
+async def analyze_network_endpoint(req: AnalyzeRequest):
+    """Run Network analysis only."""
+    try:
+        v1, _, net_v1 = load_clients(req.kubeconfig_content)
+        findings = analyze_network(v1, net_v1)
+        return {
+            "module":   "network",
+            "findings": [f.model_dump() for f in findings],
+            "total":    len(findings),
+            **summarize(findings),
+        }
+    except ApiException as e:
+        logger.error(f"Kubernetes API error: {e}")
+        raise HTTPException(status_code=502, detail=f"Kubernetes API error: {e.reason}")
+    except Exception as e:
+        logger.error(f"Network analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -222,26 +262,26 @@ async def analyze_all(req: AnalyzeRequest):
         except Exception as e:
             logger.error(f"Pod analyzer failed: {e}")
 
-        # ── Secret — uncomment once Blason's module is ready ───────────────
-        # try:
-        #     all_findings.extend(analyze_secret(v1))
-        # except Exception as e:
-        #     logger.error(f"Secret analyzer failed: {e}")
+        # ── Secret ───────────────────────────────────────────────────
+        try:
+            all_findings.extend(analyze_secret(v1))
+        except Exception as e:
+            logger.error(f"Secret analyzer failed: {e}")
 
-        # ── Network — uncomment once Shreyas's module is ready ─────────────
-        # try:
-        #     all_findings.extend(analyze_network(v1, net_v1))
-        # except Exception as e:
-        #     logger.error(f"Network analyzer failed: {e}")
+        # ── Network ──────────────────────────────────────────────────
+        try:
+            all_findings.extend(analyze_network(v1, net_v1))
+        except Exception as e:
+            logger.error(f"Network analyzer failed: {e}")
 
         # Sort highest risk first
         all_findings.sort(key=lambda f: -f.score)
 
         return {
-            "cluster_info": cluster_info,
-            "findings":     all_findings,
-            "total_issues": len(all_findings),
-            **summarize(all_findings),
+        "cluster_info": cluster_info,
+        "findings":     [f.model_dump() for f in all_findings],  # ← add .model_dump()
+        "total_issues": len(all_findings),
+        **summarize(all_findings),
         }
 
     except ApiException as e:
