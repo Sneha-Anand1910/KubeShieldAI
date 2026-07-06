@@ -2,7 +2,7 @@ from models.findings import make_finding
 
 def check_read_only_fs(container):
     findings = []
-    security_context = container.get("securityContext", {})
+    security_context = container.get("securityContext") or {}
     if security_context.get("readOnlyRootFilesystem") is False:
         findings.append(make_finding(
             id="POD-004",

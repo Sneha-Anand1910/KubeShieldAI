@@ -22,7 +22,8 @@ def _normalize_keys(obj):
     return obj
 
 
-def analyze_pod(resource):
+def _analyze_single_pod(resource):
+    """Run all pod-level rule checks against a single pod resource (dict)."""
     resource = _normalize_keys(resource)
 
     findings = []
@@ -36,4 +37,22 @@ def analyze_pod(resource):
         findings.extend(check_privilege_escalation(container))
         findings.extend(check_read_only_fs(container))
 
-    return [f.model_dump() for f in findings]
+    return findings
+
+
+def analyze_pod(v1):
+    """
+    Contract entry point: accepts a live CoreV1Api client,
+    fetches all pods cluster-wide, and runs the rule checks on each.
+
+    Returns a list of Finding objects (NOT dicts) — app.py's endpoints
+    call .model_dump() on each item themselves.
+    """
+    pods = v1.list_pod_for_all_namespaces()
+
+    all_findings = []
+    for pod in pods.items:
+        pod_dict = pod.to_dict()
+        all_findings.extend(_analyze_single_pod(pod_dict))
+
+    return all_findings

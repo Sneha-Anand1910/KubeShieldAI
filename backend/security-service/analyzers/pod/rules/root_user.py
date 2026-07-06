@@ -1,7 +1,7 @@
 from models.findings import make_finding
 def check_root_user(container):
     findings = []
-    security_context = container.get("securityContext", {})
+    security_context = container.get("securityContext") or {}
     if security_context.get("runAsUser") == 0:
         findings.append(make_finding(
             id="POD-001",
