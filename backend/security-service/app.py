@@ -43,7 +43,7 @@ from analyzers.pod.analyzer import analyze_pod
 
 
 from analyzers.secret.analyzer  import analyze as analyze_secret
-from analyzers.network.analyzer import analyze as analyze_network
+from analyzers.network.analyzer import analyze_network
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("security-service")

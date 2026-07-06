@@ -1,4 +1,4 @@
-from models.finding import make_finding
+from models.findings import make_finding
 
 def check_privileged(container):
     findings = []

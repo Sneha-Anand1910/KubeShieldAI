@@ -1,4 +1,4 @@
-from models.finding import Finding
+from models.findings import Finding
 
 
 def check(resource):
