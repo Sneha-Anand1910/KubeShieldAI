@@ -2,7 +2,7 @@ from models.finding import make_finding
 
 def check_privilege_escalation(container):
     findings = []
-    security_context = container.get("securityContext", {})
+    security_context = container.get("securityContext") or {}
     if security_context.get("allowPrivilegeEscalation") is True:
         findings.append(make_finding(
             id="POD-003",

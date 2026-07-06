@@ -2,7 +2,7 @@ from models.finding import make_finding
 
 def check_privileged(container):
     findings = []
-    security_context = container.get("securityContext", {})
+    security_context = container.get("securityContext") or {}
     if security_context.get("privileged") is True:
         findings.append(make_finding(
             id="POD-002",
