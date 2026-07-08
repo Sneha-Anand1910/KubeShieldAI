@@ -21,6 +21,9 @@ export default function History() {
       <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 32, color: 'var(--text-primary)', marginBottom: 4, textTransform: 'uppercase' }}>
         History
       </h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: 13, padding: 4, marginBottom: 28, width: 'fit-content', gap: 4 }}>
+        Stores a timestamped log of all past scans so you can track your cluster's security posture over time and compare results.
+      </p>
 
       {history.length === 0 ? (
         <div style={{ padding: '48px', textAlign: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', color: 'var(--text-muted)' }}>
