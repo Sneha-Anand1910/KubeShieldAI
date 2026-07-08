@@ -316,7 +316,7 @@ export default function Ingest({ onScanComplete }) {
       addLog(`✓ Analysis complete — ${result.findings.length} findings, score ${result.score?.risk_score}`, 'success')
       setScanResult(result)
       setState('done')
-      onScanComplete?.(result)
+      onScanComplete?.({ ...result, summary: ingestData.summary })
     } catch (err) {
       addLog(`✗ Error: ${err.message}`, 'error')
       setErrorMsg(err.message)
@@ -360,7 +360,7 @@ export default function Ingest({ onScanComplete }) {
       const result = { findings: allFindings, score: latestScore }
       setScanResult(result)
       setState('done')
-      onScanComplete?.(result)
+      onScanComplete?.({ ...result, summary: ingestData.summary })
     } catch (err) {
       addLog(`✗ Error: ${err.message}`, 'error')
       setErrorMsg(err.message)
