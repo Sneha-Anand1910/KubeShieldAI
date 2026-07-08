@@ -1,44 +1,107 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg-base:      #080C14;
-  --bg-surface:   #0D1421;
-  --bg-elevated:  #111B2E;
-  --bg-card:      #152038;
-  --bg-hover:     #1A2845;
-
-  --border:       rgba(0, 212, 255, 0.1);
-  --border-mid:   rgba(0, 212, 255, 0.2);
-  --border-strong:rgba(0, 212, 255, 0.4);
-
-  --cyan:         #00D4FF;
-  --cyan-dim:     rgba(0, 212, 255, 0.15);
-  --cyan-glow:    rgba(0, 212, 255, 0.08);
-
-  --amber:        #F59E0B;
-  --amber-dim:    rgba(245, 158, 11, 0.15);
-
-  --coral:        #FF4D6D;
-  --coral-dim:    rgba(255, 77, 109, 0.15);
-
-  --green:        #10B981;
-  --green-dim:    rgba(16, 185, 129, 0.15);
-
-  --purple:       #A78BFA;
-  --purple-dim:   rgba(167, 139, 250, 0.15);
-
-  --text-primary:   #E8F4FF;
-  --text-secondary: #7A9CC0;
-  --text-muted:     #3D5A7A;
-
+  --font-display: 'Archivo Black', sans-serif;
   --font-ui:   'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  /* Brutalist HUD → sharp corners everywhere */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
 }
+
+.hud-grid-bg {
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ── DARK THEME (image 4 reference) ── */
+:root[data-theme='dark'] {
+  --bg-base:      #0A0A0A;
+  --bg-surface:   #000000;
+  --bg-elevated:  #111111;
+  --bg-card:      #0D0D0D;
+  --bg-hover:     #1A1A1A;
+
+  --border:        #262626;
+  --border-mid:    #3A3A3A;
+  --border-strong: #C6FF00;
+
+  --cyan:      #C6FF00;   /* primary accent = lime in dark mode */
+  --cyan-dim:  rgba(198, 255, 0, 0.15);
+  --cyan-glow: rgba(198, 255, 0, 0.08);
+
+  --amber:     #F59E0B;
+  --amber-dim: rgba(245, 158, 11, 0.15);
+
+  --coral:     #FF4D6D;
+  --coral-dim: rgba(255, 77, 109, 0.15);
+
+  --green:     #10B981;
+  --green-dim: rgba(16, 185, 129, 0.15);
+
+  --purple:    #A78BFA;
+  --purple-dim:rgba(167, 139, 250, 0.15);
+
+  --text-primary:   #F5F5F5;
+  --text-secondary: #A3A3A3;
+  --text-muted:     #666666;
+}
+
+/* ── LIGHT THEME (image 3 reference) ── */
+:root[data-theme='light'] {
+  --bg-base:      #FFFFFF;
+  --bg-surface:   #F7F7F5;
+  --bg-elevated:  #F2F2EF;
+  --bg-card:      #FFFFFF;
+  --bg-hover:     #F0F0EC;
+
+  --border:        #D9D9D4;
+  --border-mid:    #BFBFB8;
+  --border-strong: #FF4500;
+
+  --cyan:      #FF4500;   /* primary accent = orange-red in light mode */
+  --cyan-dim:  rgba(255, 69, 0, 0.12);
+  --cyan-glow: rgba(255, 69, 0, 0.06);
+
+  --amber:     #D97706;
+  --amber-dim: rgba(217, 119, 6, 0.12);
+
+  --coral:     #DC2626;
+  --coral-dim: rgba(220, 38, 38, 0.12);
+
+  --green:     #059669;
+  --green-dim: rgba(5, 150, 105, 0.12);
+
+  --purple:    #7C3AED;
+  --purple-dim:rgba(124, 58, 237, 0.12);
+
+  --text-primary:   #0A0A0A;
+  --text-secondary: #404040;
+  --text-muted:     #808080;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 0; }
+
+::selection { background: var(--cyan-dim); color: var(--cyan); }
+
 
 html, body, #root {
   height: 100%;
