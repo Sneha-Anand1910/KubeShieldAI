@@ -41,6 +41,9 @@ export default function Score({ scanResult, onNav }) {
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 32, color: 'var(--text-primary)', marginBottom: 4, textTransform: 'uppercase' }}>
           Risk score
         </h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 13,  padding: 4, marginBottom: 28, width: 'fit-content', gap: 4 }}>
+        Calculates a weighted risk score (0–100) and letter grade based on the severity and type of findings across your cluster.
+        </p>
         <div style={{ padding: '48px', textAlign: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)' }}>
           <BarChart3 size={40} color="var(--text-muted)" style={{ marginBottom: 16 }} />
           <div style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 16 }}>Run a scan first to see scoring</div>

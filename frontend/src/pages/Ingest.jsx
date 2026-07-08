@@ -277,7 +277,7 @@ export default function Ingest({ onScanComplete }) {
 
   useEffect(() => {
     fetchNamespaces()
-    const interval = setInterval(fetchNamespaces, 30000)
+    const interval = setInterval(fetchNamespaces, 60000)
     return () => clearInterval(interval)
   }, [fetchNamespaces])
 
@@ -400,7 +400,7 @@ export default function Ingest({ onScanComplete }) {
             <Icon size={14} color={mode === id ? (id === 'live' ? 'var(--cyan)' : 'var(--text-secondary)') : 'var(--text-muted)'} />
             <div style={{ textAlign: 'left' }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: mode === id ? (id === 'live' ? 'var(--cyan)' : 'var(--text-primary)') : 'var(--text-muted)', lineHeight: 1.2 }}>{label}</div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.2, marginTop: 1 }}>{desc}</div>
+              <div style={{ fontSize: 10, color: mode === id ? (id === 'live' ? 'var(--cyan)' : 'var(--text-primary)') : 'var(--text-muted)', lineHeight: 1.2 }}>{desc}</div>
             </div>
           </button>
         ))}
