@@ -38,7 +38,9 @@ export default function Score({ scanResult, onNav }) {
     return (
       <div style={{ padding: '32px 40px', animation: 'fade-up 0.3s ease' }}>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--cyan)', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 8 }}>03 · Scoring engine</div>
-        <h1 style={{ fontSize: 28, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 24 }}>Risk score</h1>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 32, color: 'var(--text-primary)', marginBottom: 4, textTransform: 'uppercase' }}>
+          Risk score
+        </h1>
         <div style={{ padding: '48px', textAlign: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)' }}>
           <BarChart3 size={40} color="var(--text-muted)" style={{ marginBottom: 16 }} />
           <div style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 16 }}>Run a scan first to see scoring</div>
