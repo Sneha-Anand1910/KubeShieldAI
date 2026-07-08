@@ -128,7 +128,65 @@ def scan_live():
         )
     except Exception as e:
         raise HTTPException(500, f"Failed to connect to cluster: {str(e)}")
+    
 
+@app.get("/ingest/namespaces")
+async def get_namespaces():
+    """
+    Returns all namespaces + pods per namespace from the live cluster.
+    Called by the frontend on load and every 30 seconds.
+    """
+    try:
+        from kubernetes import client, config
+        try:
+            config.load_incluster_config()
+        except Exception:
+            config.load_kube_config()
+
+        v1 = client.CoreV1Api()
+
+        # Get all namespaces
+        ns_list = v1.list_namespace(_request_timeout=10)
+
+        # Get all pods in one API call (more efficient)
+        all_pods = v1.list_pod_for_all_namespaces(_request_timeout=10)
+
+        # Group pods by namespace
+        pods_by_ns = {}
+        for pod in all_pods.items:
+            ns = pod.metadata.namespace
+            if ns not in pods_by_ns:
+                pods_by_ns[ns] = []
+            pods_by_ns[ns].append({
+                "name":   pod.metadata.name,
+                "status": pod.status.phase or "Unknown",
+            })
+
+        namespaces = []
+        for ns in ns_list.items:
+            name = ns.metadata.name
+            pods = pods_by_ns.get(name, [])
+            namespaces.append({
+                "name":      name,
+                "status":    ns.status.phase or "Active",
+                "pod_count": len(pods),
+                "pods":      pods,
+            })
+
+        # Get node info
+        nodes = v1.list_node(_request_timeout=10)
+        version = client.VersionApi().get_code(_request_timeout=10)
+
+        return {
+            "namespaces": namespaces,
+            "cluster_info": {
+                "node_count":         len(nodes.items),
+                "nodes":              [n.metadata.name for n in nodes.items],
+                "kubernetes_version": version.git_version,
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ── Mode 2: YAML file upload ──────────────────────────────────────────────
 
