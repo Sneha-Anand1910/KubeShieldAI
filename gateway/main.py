@@ -64,6 +64,19 @@ async def ingest_yaml(file: UploadFile = File(...)):
             return r.json()
         except httpx.ConnectError:
             raise HTTPException(503, "ingestion-service is not running")
+        
+# ── /api/ingest/namespaces ────────────────────────────────────────────────
+# React frontend polls this every 30s to render the live namespace/pod graph
+# Gateway → ingestion-service → returns namespaces + pod list + cluster_info
+@app.get("/api/ingest/namespaces")
+async def ingest_namespaces():
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            r = await client.get(f"{INGESTION_URL}/ingest/namespaces")
+            r.raise_for_status()
+            return r.json()
+        except httpx.ConnectError:
+            raise HTTPException(503, "ingestion-service is not running")
 
 
 # ── /api/analyze ──────────────────────────────────────────────────────────
