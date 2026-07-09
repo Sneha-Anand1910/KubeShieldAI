@@ -120,7 +120,7 @@ export default function Findings({ scanResult, onNav }) {
             ))}
           </div>
           {filtered.map((f, i) => (
-            <div key={f.id || i} onClick={() => setSelected(selected === f ? null : f)} style={{ display: 'grid', gridTemplateColumns: '90px 1fr 100px 120px 100px', padding: '14px 20px', borderBottom: '1px solid var(--border)', alignItems: 'center', gap: 12, cursor: 'pointer', background: selected === f ? 'var(--cyan-glow)' : 'transparent', borderLeft: selected === f ? '2px solid var(--cyan)' : '2px solid transparent', transition: 'background 0.15s' }}
+            <div key={`${f.id}-${f.namespace}-${f.resource_name}-${i}`} onClick={() => setSelected(selected === f ? null : f)} style={{ display: 'grid', gridTemplateColumns: '90px 1fr 100px 120px 100px', padding: '14px 20px', borderBottom: '1px solid var(--border)', alignItems: 'center', gap: 12, cursor: 'pointer', background: selected === f ? 'var(--cyan-glow)' : 'transparent', borderLeft: selected === f ? '2px solid var(--cyan)' : '2px solid transparent', transition: 'background 0.15s' }}
               onMouseEnter={e => { if (selected !== f) e.currentTarget.style.background = 'var(--bg-hover)' }}
               onMouseLeave={e => { if (selected !== f) e.currentTarget.style.background = 'transparent' }}
             >
