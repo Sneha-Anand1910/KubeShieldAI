@@ -14,8 +14,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import httpx
 import os
+from db import init_db, get_session, ScanHistory
 
 app = FastAPI(title="KubeShield Gateway")
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
 # Allow React dev server (Vite on :5173) to call this during development
 app.add_middleware(
@@ -107,6 +112,33 @@ async def analyze(body: dict):
         #     scoring_result = score_r.json()
         # except httpx.ConnectError:
         #     raise HTTPException(503, "scoring-service is not running")
+        # ── Save this scan to history ──────────────────────────────────────
+    try:
+        db = get_session()
+        entry = ScanHistory(
+            resource_count=security_result.get("total_issues", 0),
+            findings_count=len(security_result.get("findings", [])),
+            risk_score=None,   # scoring is currently bypassed
+            grade=None,
+            status="completed",
+            by_severity=security_result.get("by_severity", {}),
+            by_module=security_result.get("by_module", {}),
+        )
+        db.add(entry)
+        db.commit()
+        db.close()
+    except Exception as e:
+        # Don't fail the whole scan just because history logging failed
+        print(f"Warning: failed to save scan history: {e}")
+
+    return {
+        "findings":     security_result["findings"],
+        "cluster_info": security_result.get("cluster_info", {}),
+        "total_issues": security_result.get("total_issues", 0),
+        "by_severity":  security_result.get("by_severity", {}),
+        "by_module":    security_result.get("by_module", {}),
+        "score":        None,
+    }
 
     # Step 3 — return combined result to frontend
     return {
@@ -118,6 +150,33 @@ async def analyze(body: dict):
         "score":        None,
     }
 
+@app.get("/api/history")
+async def get_history():
+    db = get_session()
+    try:
+        rows = (
+            db.query(ScanHistory)
+            .order_by(ScanHistory.timestamp.desc())
+            .limit(50)
+            .all()
+        )
+        return {
+            "history": [
+                {
+                    "id":        f"scan-{r.id}",
+                    "timestamp": r.timestamp.isoformat(),
+                    "resources": r.resource_count,
+                    "findings":  r.findings_count,
+                    "score":     r.risk_score if r.risk_score is not None else 0,
+                    "status":    r.status,
+                }
+                for r in rows
+            ]
+        }
+    finally:
+        db.close()
+        
+        
 # ── /api/ai/explain ───────────────────────────────────────────────────────
 # React AI page sends findings, gateway forwards to ai-service → Gemini
 @app.post("/api/ai/explain")
