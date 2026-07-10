@@ -58,7 +58,10 @@ export default function Findings({ scanResult, onNav }) {
     return (
       <div style={{ padding: '32px 40px', animation: 'fade-up 0.3s ease' }}>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--cyan)', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 8 }}>02 · Security analysis</div>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: 'var(--text-primary)', marginBottom: 24, textTransform: 'uppercase' }}>Findings</h1>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: 'var(--text-primary)', marginBottom: 10, textTransform: 'uppercase' }}>Findings</h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 13,  padding: 4, marginBottom: 28, width: 'fit-content', gap: 4 }}>
+          Displays all security misconfigurations detected across your live cluster — RBAC, Pod, Secrets, and Network issues ranked by severity.
+          </p>
         <div style={{ padding: '48px', textAlign: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)' }}>
           <Shield size={40} color="var(--text-muted)" style={{ marginBottom: 16 }} />
           <div style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 16 }}>No scan run yet</div>
@@ -88,6 +91,9 @@ export default function Findings({ scanResult, onNav }) {
         <div style={{ padding: '32px 40px 0' }}>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--cyan)', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 8 }}>02 · Security analysis</div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: 'var(--text-primary)', marginBottom: 8, textTransform: 'uppercase' }}>Findings</h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13,  padding: 4, marginBottom: 28, width: 'fit-content', gap: 4 }}>
+          Displays all security misconfigurations detected across your live cluster — RBAC, Pod, and Network issues Secrets issues ranked by severity.
+          </p>
 
           {summary && (
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', marginBottom: 16 }}>
