@@ -8,6 +8,7 @@ to the correct microservice internally.
 Runs on port 8000.
 """
 
+from datetime import timezone
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -140,15 +141,6 @@ async def analyze(body: dict):
         "score":        None,
     }
 
-    # Step 3 — return combined result to frontend
-    return {
-        "findings":     security_result["findings"],
-        "cluster_info": security_result.get("cluster_info", {}),
-        "total_issues": security_result.get("total_issues", 0),
-        "by_severity":  security_result.get("by_severity", {}),
-        "by_module":    security_result.get("by_module", {}),
-        "score":        None,
-    }
 
 @app.get("/api/history")
 async def get_history():
@@ -164,7 +156,7 @@ async def get_history():
             "history": [
                 {
                     "id":        f"scan-{r.id}",
-                    "timestamp": r.timestamp.isoformat(),
+                    "timestamp": r.timestamp.replace(tzinfo=timezone.utc).isoformat(),
                     "resources": r.resource_count,
                     "findings":  r.findings_count,
                     "score":     r.risk_score if r.risk_score is not None else 0,
