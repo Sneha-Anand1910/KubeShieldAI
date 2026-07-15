@@ -207,21 +207,33 @@ def detect_attack_paths(groups: list[dict]) -> list[dict]:
         for ns in g["namespaces"]:
             caps_by_ns.setdefault(ns, set()).add(cap)
 
-    paths = []
+    WHY = {
+        "Privilege → credential theft":
+            "A privileged or root workload sits alongside exposed secret access — "
+            "an attacker who breaks into the pod could read those secrets.",
+        "Exposed workload breakout":
+            "An internet-reachable workload also runs as root or privileged — "
+            "an attacker reaching it could break out onto the host.",
+        "RBAC escalation → cluster takeover":
+            "An over-permissive RBAC role is combined with workload or secret "
+            "access — these can be chained together to take over the cluster.",
+    }
+
+    # Merge by path TYPE: one row per attack path, with every scope (namespace)
+    # it was found in listed together — so the same path isn't repeated per namespace.
+    scopes: dict[str, set] = {}
     for ns, caps in caps_by_ns.items():
         if "PRIV" in caps and "SECRET" in caps:
-            paths.append({"name": "Privilege → credential theft",
-                          "why": "a privileged/root workload sits alongside exposed secret access",
-                          "namespace": ns})
+            scopes.setdefault("Privilege → credential theft", set()).add(ns)
         if "EXPOSURE" in caps and "PRIV" in caps:
-            paths.append({"name": "Exposed workload breakout",
-                          "why": "an internet-reachable workload also runs privileged/root",
-                          "namespace": ns})
+            scopes.setdefault("Exposed workload breakout", set()).add(ns)
         if "RBAC_ESC" in caps and ("PRIV" in caps or "SECRET" in caps):
-            paths.append({"name": "RBAC escalation → cluster takeover",
-                          "why": "over-broad RBAC combines with workload/secret access",
-                          "namespace": ns})
-    return paths
+            scopes.setdefault("RBAC escalation → cluster takeover", set()).add(ns)
+
+    return [
+        {"name": name, "why": WHY[name], "namespace": ", ".join(sorted(ns_set))}
+        for name, ns_set in scopes.items()
+    ]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -321,17 +333,26 @@ def compute(findings: list[dict]) -> dict:
     }
 
 
-def build_explanation(res: dict, total_findings: int) -> str:
+def build_explanation(res: dict, total_findings: int, counts: dict) -> str:
     if res["distinct_issues"] == 0:
         return "No security findings — cluster looks clean."
+
+    crit_high = (counts.get("Critical", 0) or 0) + (counts.get("High", 0) or 0)
     top = res["priorities"][0]
-    cats = ", ".join(res["breakdown"].keys())
-    msg = (f"Grade {res['grade']}: {res['distinct_issues']} distinct issue(s) "
-           f"({total_findings} findings) across {cats}. "
-           f"Highest risk: \"{top['Issue']}\" ({top['Severity']}, {top['resource']}).")
+    n = top.get("affected_count", 1)
+    res_word = "resource" if n == 1 else "resources"
+
+    msg = (f"Grade {res['grade']} due to {total_findings} findings across "
+           f"{res['distinct_issues']} distinct security issue(s).")
+    if crit_high:
+        verb = "finding is" if crit_high == 1 else "findings are"
+        msg += f" {crit_high} {verb} Critical or High severity."
+    msg += f" The highest-impact issue, \"{top['Issue']}\", affects {n} {res_word}"
     if res["attack_paths"]:
         names = "; ".join(sorted({p["name"] for p in res["attack_paths"]}))
-        msg += f" Attack path(s) detected: {names}."
+        msg += f", and an attack path to potential compromise was detected: {names}."
+    else:
+        msg += "."
     return msg
 
 
@@ -343,6 +364,10 @@ def build_explanation(res: dict, total_findings: int) -> str:
 def score(body: FindingsInput):
     findings = body.findings
     res = compute(findings)
+
+    # Unique objects with at least one finding: (namespace, resource) pairs.
+    # e.g. Pod A with root + privileged = 2 findings but counts as 1 resource.
+    resources_affected = len({(f_namespace(f), f_resource(f)) for f in findings})
 
     # Severity counts over RAW findings (so the pie chart matches the Findings page)
     counts = body.summary.get("by_severity") or {
@@ -366,10 +391,11 @@ def score(body: FindingsInput):
         "total_findings":   len(findings),
         "checks_evaluated": list(res["breakdown"].keys()),
         # ── new signals (additive; UI shows them if present) ──
+        "resources_affected": resources_affected,
         "distinct_issues":  res["distinct_issues"],
         "attack_paths":     res["attack_paths"],
         "chain_multiplier": res["chain_multiplier"],
-        "explanation":      build_explanation(res, len(findings)),
+        "explanation":      build_explanation(res, len(findings), counts),
     }
 
 
