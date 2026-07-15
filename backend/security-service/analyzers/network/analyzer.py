@@ -11,17 +11,21 @@ from analyzers.network.rules.allow_all_network_policy import (
 )
 
 
-def analyze_network():
+def analyze_network(core=None, networking=None):
     """
-    Analyze NetworkPolicy-related misconfigurations
-    in the Kubernetes cluster.
+    Analyze NetworkPolicy-related misconfigurations in the Kubernetes cluster.
+
+    Called two ways:
+      - from app.py's /analyze:  analyze_network(core_v1, networking_v1)
+        (clients are passed in, already authenticated)
+      - standalone (CLI / __main__): analyze_network()  → loads its own kubeconfig
     """
 
-    # Load kubeconfig
-    config.load_kube_config()
-
-    core = client.CoreV1Api()
-    networking = client.NetworkingV1Api()
+    # If clients weren't passed (standalone run), build them from local kubeconfig
+    if core is None or networking is None:
+        config.load_kube_config()
+        core = client.CoreV1Api()
+        networking = client.NetworkingV1Api()
 
     # Fetch live resources
     pods = core.list_pod_for_all_namespaces().items

@@ -66,43 +66,122 @@ async def ingest_yaml(file: UploadFile = File(...)):
             raise HTTPException(503, "ingestion-service is not running")
 
 
+# ── Finding normalization ──────────────────────────────────────────────────
+# The security-service can emit findings in two shapes depending on the build:
+#   Schema A (repo source): severity / title / module / resource_name /
+#                           evidence / remediation_hint
+#   Schema B (frontend):    Severity / Issue  / check  / resource /
+#                           Detail   / Recommendation
+# The React pages (Findings/Score/AIAdvice) and scoring-service both read
+# Schema B, so we normalize every finding to a Schema-B superset here. This
+# makes the whole pipeline work regardless of which security image is deployed.
+
+# security-service module name → scoring/UI category name
+_CATEGORY_FROM_MODULE = {
+    "rbac":             "RBAC",
+    "pod":              "Pod Security",
+    "pods":             "Pod Security",
+    "pod security":     "Pod Security",
+    "secret":           "Secrets",
+    "secrets":          "Secrets",
+    "network":          "Network",
+    "networking":       "Network",
+    "service exposure": "Network",
+}
+
+
+def _pick(f: dict, *keys, default=""):
+    for k in keys:
+        v = f.get(k)
+        if v not in (None, ""):
+            return v
+    return default
+
+
+def normalize_finding(f: dict) -> dict:
+    """Return a finding carrying BOTH capital-case (UI/scoring) and lowercase
+    (AI model) keys so every downstream consumer finds what it expects."""
+    severity = str(_pick(f, "Severity", "severity", default="Low")).strip().capitalize()
+    module_raw = _pick(f, "check", "module", "category", default="Unknown")
+    category = _CATEGORY_FROM_MODULE.get(str(module_raw).strip().lower(), module_raw)
+    issue    = _pick(f, "Issue", "title", "issue")
+    resource = _pick(f, "resource", "resource_name", "Resource")
+    detail   = _pick(f, "Detail", "evidence", "detail")
+    reco     = _pick(f, "Recommendation", "remediation_hint", "recommendation")
+
+    return {
+        **f,
+        # Schema B (React pages + scoring-service)
+        "Severity":       severity,
+        "Issue":          issue,
+        "check":          category,
+        "resource":       resource,
+        "Detail":         detail,
+        "Recommendation": reco,
+        # Schema A (kept for the AI-service Finding model)
+        "severity":       severity,
+        "module":         _pick(f, "module", default=module_raw),
+        "title":          issue,
+        "resource_name":  resource,
+        "evidence":       detail,
+        "remediation_hint": reco,
+    }
+
+
 # ── /api/analyze ──────────────────────────────────────────────────────────
 # After ingestion, the frontend triggers analysis
 # Gateway → security-service /analyze → scoring-service /score → combined response
 @app.post("/api/analyze")
 async def analyze(body: dict):
-    async with httpx.AsyncClient(timeout=30) as client:
-        # Step 1 — security-service
+    # Security scans the LIVE cluster itself (via the kubeconfig mounted into its
+    # container), so ONE call returns every finding across all modules — RBAC,
+    # Pod, Secrets, Network. The frontend still sends {resources}/{yaml_content},
+    # but we no longer forward them per-resource; security reads the cluster
+    # directly. Live scan is the primary path; YAML upload is a fallback.
+    async with httpx.AsyncClient(timeout=180) as client:
         try:
-            kubeconfig_path = os.path.expanduser("~/.kube/config")
-            with open(kubeconfig_path, "r") as f:
-                kubeconfig_str = f.read()
-
-            sec_r = await client.post(
-                f"{SECURITY_URL}/analyze",
-                json={"kubeconfig_content": kubeconfig_str}
-            )
-            sec_r.raise_for_status()
-            security_result = sec_r.json()
+            sec_r = await client.post(f"{SECURITY_URL}/analyze", json={})
         except httpx.ConnectError:
             raise HTTPException(503, "security-service is not running")
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"security-service request failed: {e}")
 
-        # Step 2 — scoring-service
-        # ── Scoring bypassed for now ──────────────────────────────
-        # try:
-        #     score_r = await client.post(f"{SCORING_URL}/score", ...)
-        #     scoring_result = score_r.json()
-        # except httpx.ConnectError:
-        #     raise HTTPException(503, "scoring-service is not running")
+    if sec_r.status_code != 200:
+        raise HTTPException(502, f"security-service error: {sec_r.text[:300]}")
 
-    # Step 3 — return combined result to frontend
+    result = sec_r.json()
+
+    # Normalize every finding so the UI, scoring, and AI all agree on field names
+    findings     = [normalize_finding(f) for f in result.get("findings", [])]
+    by_severity  = result.get("by_severity") or {}
+    by_module    = result.get("by_module") or {}
+    cluster_info = result.get("cluster_info") or {}
+    analyzed     = len(findings)
+    skipped      = 0
+
+    # ── Call scoring-service to get the real risk score ──────────────────────
+    # A scoring failure must not break the scan — fall back to a null score.
+    score: dict = {"risk_score": None}
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            score_r = await client.post(
+                f"{SCORING_URL}/score",
+                json={"findings": findings, "summary": {"by_severity": by_severity}},
+            )
+            if score_r.status_code == 200:
+                score = score_r.json()
+        except httpx.HTTPError:
+            pass  # scoring-service down/unreachable — keep the null score
+
     return {
-        "findings":     security_result["findings"],
-        "cluster_info": security_result.get("cluster_info", {}),
-        "total_issues": security_result.get("total_issues", 0),
-        "by_severity":  security_result.get("by_severity", {}),
-        "by_module":    security_result.get("by_module", {}),
-        "score":        None,
+        "findings":     findings,
+        "cluster_info": cluster_info,
+        "total_issues": len(findings),
+        "analyzed":     analyzed,
+        "skipped":      skipped,
+        "by_severity":  by_severity,
+        "by_module":    by_module,
+        "score":        score,
     }
 
 # ── /api/ai/explain ───────────────────────────────────────────────────────

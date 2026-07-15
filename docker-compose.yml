@@ -1,59 +1,84 @@
-version: '3.8'
-
 services:
-
-  # ── ingestion-service (Streamlit upload UI) ──────────────────────────────
+  # ── ingestion-service (FastAPI /scan/live, /scan/yaml) ───────────────────
   ingestion-service:
-    image: sneha1910/ingestion-service:v1
+    build: ./backend/ingestion-service
     ports:
-      - "8001:8501"   # external 8001 -> internal Streamlit port 8501
+      - "8001:8001"
+    volumes:
+      - ${HOME}/.kube/config-docker.yaml:/root/.kube/config:ro
     networks:
       - kubeshield-net
-
   # ── security-service (FastAPI /analyze) ──────────────────────────────────
   security-service:
-    image: shreyaspatil67/security-service:v1
+    # was: image: shreyaspatil67/security-service:v1   (revert here to roll back)
+    build: ./backend/security-service
     ports:
-      - "8002:8000"   # external 8002 -> internal uvicorn port 8000
+      - "8002:8000"
+    volumes:
+      # same kubeconfig the ingestion service uses — lets security scan the live cluster
+      - ${HOME}/.kube/config-docker.yaml:/root/.kube/config:ro
     networks:
       - kubeshield-net
-
-  # ── scoring-service (FastAPI /score) ─────────────────────────────────────
+  # ── scoring-service (FastAPI /score) ────────────────────────────────────
   scoring-service:
-    image: shreyaspatil67/scoring-service:v1
+    build: ./backend/scoring-service
     ports:
-      - "8003:8001"   # external 8003 -> internal uvicorn port 8001
+      - "8003:8001"
     networks:
       - kubeshield-net
-
   # ── ai-service (FastAPI /explain, calls Gemini) ──────────────────────────
   ai-service:
-    image: blason2108/kubeshieldai:latest
+    build: ./backend/ai-service
     ports:
       - "8000:8000"
     environment:
-      - GEMINI_API_KEY=GEMINI_API_KEY
+      # Reads GEMINI_API_KEY from the .env file next to this compose file
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     networks:
       - kubeshield-net
-
   # ── dashboard-service (Streamlit main UI, orchestrates everything) ───────
-  dashboard-service:  
+  dashboard-service:
     image: blason2108/kubeshieldai-dashboard:latest
     ports:
       - "8501:8501"
     environment:
-      # NOTE: these use INTERNAL container ports, not the external mapped ones
       - SECURITY_SERVICE_URL=http://security-service:8000
       - SCORING_SERVICE_URL=http://scoring-service:8001
       - AI_SERVICE_URL=http://ai-service:8000
-      - INGESTION_SERVICE_URL=http://ingestion-service:8501
+      - INGESTION_SERVICE_URL=http://ingestion-service:8001
     depends_on:
       - security-service
       - scoring-service
       - ai-service
     networks:
       - kubeshield-net
-
+  # ── gateway (FastAPI, only service the React frontend talks to) ──────────
+  gateway:
+    build: ./gateway
+    ports:
+      - "8004:8000"
+    volumes:
+      - ${HOME}/.kube/config-docker.yaml:/root/.kube/config:ro
+    environment:
+      - SECURITY_SERVICE_URL=http://security-service:8000
+      - SCORING_SERVICE_URL=http://scoring-service:8001
+      - AI_SERVICE_URL=http://ai-service:8000
+      - INGESTION_SERVICE_URL=http://ingestion-service:8001
+    depends_on:
+      - security-service
+      - scoring-service
+      - ai-service
+    networks:
+      - kubeshield-net
+  # ── frontend (React/Vite, served via nginx) ──────────────────────────────
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - gateway
+    networks:
+      - kubeshield-net
 networks:
   kubeshield-net:
     driver: bridge
