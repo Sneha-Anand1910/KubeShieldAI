@@ -200,7 +200,7 @@ export default function Score({ scanResult, onNav }) {
             </div>
           ))}
         </div>
-      )}
+      ))}
     </div>
   )
 }
