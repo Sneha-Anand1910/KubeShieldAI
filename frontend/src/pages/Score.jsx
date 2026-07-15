@@ -122,21 +122,16 @@ export default function Score({ scanResult, onNav }) {
       </div>
 
       {/* Top priorities */}
-      {score.top_priorities?.length > 0 && (
-        <div style={{ marginTop: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '24px' }}>
-          <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 16 }}>Top priorities to fix</div>
-          {score.top_priorities.map((p, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: i < score.top_priorities.length - 1 ? '1px solid var(--border)' : 'none' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', minWidth: 20 }}>#{p.rank}</span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>{p.Issue}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.resource} · effort: {p.effort}</div>
-              </div>
-              <span style={{ fontSize: 11, color: SEV_COLORS[p.Severity] || 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{p.Severity}</span>
-            </div>
-          ))}
+      {score.top_priorities.map((p, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: i < score.top_priorities.length - 1 ? '1px solid var(--border)' : 'none' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', minWidth: 20 }}>#{p.rank}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>{p.title}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.resource_name} · effort: {p.effort}</div>
+          </div>
+          <span style={{ fontSize: 11, color: SEV_COLORS[p.severity] || 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{p.severity}</span>
         </div>
-      )}
+      ))}
     </div>
   )
 }
