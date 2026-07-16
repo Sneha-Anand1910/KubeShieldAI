@@ -10,7 +10,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://kubeshield:kubeshield_dev@localhost:5432/kubeshield",
+    "postgresql://kubeshield:changeme@localhost:5432/kubeshield",
 )
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
