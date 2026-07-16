@@ -8,14 +8,20 @@ to the correct microservice internally.
 Runs on port 8000.
 """
 
+from datetime import timezone
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import httpx
 import os
+from db import init_db, get_session, ScanHistory
 
 app = FastAPI(title="KubeShield Gateway")
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
 # Allow React dev server (Vite on :5173) to call this during development
 app.add_middleware(
@@ -60,6 +66,19 @@ async def ingest_yaml(file: UploadFile = File(...)):
                 f"{INGESTION_URL}/scan/yaml",
                 files={"file": (file.filename, contents, "application/octet-stream")},
             )
+            r.raise_for_status()
+            return r.json()
+        except httpx.ConnectError:
+            raise HTTPException(503, "ingestion-service is not running")
+        
+# ── /api/ingest/namespaces ────────────────────────────────────────────────
+# React frontend polls this every 30s to render the live namespace/pod graph
+# Gateway → ingestion-service → returns namespaces + pod list + cluster_info
+@app.get("/api/ingest/namespaces")
+async def ingest_namespaces():
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            r = await client.get(f"{INGESTION_URL}/ingest/namespaces")
             r.raise_for_status()
             return r.json()
         except httpx.ConnectError:
@@ -184,6 +203,34 @@ async def analyze(body: dict):
         "score":        score,
     }
 
+
+@app.get("/api/history")
+async def get_history():
+    db = get_session()
+    try:
+        rows = (
+            db.query(ScanHistory)
+            .order_by(ScanHistory.timestamp.desc())
+            .limit(50)
+            .all()
+        )
+        return {
+            "history": [
+                {
+                    "id":        f"scan-{r.id}",
+                    "timestamp": r.timestamp.replace(tzinfo=timezone.utc).isoformat(),
+                    "resources": r.resource_count,
+                    "findings":  r.findings_count,
+                    "score":     r.risk_score if r.risk_score is not None else 0,
+                    "status":    r.status,
+                }
+                for r in rows
+            ]
+        }
+    finally:
+        db.close()
+        
+        
 # ── /api/ai/explain ───────────────────────────────────────────────────────
 # React AI page sends findings, gateway forwards to ai-service → Gemini
 @app.post("/api/ai/explain")
