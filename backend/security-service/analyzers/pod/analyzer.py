@@ -26,16 +26,29 @@ def _analyze_single_pod(resource):
     """Run all pod-level rule checks against a single pod resource (dict)."""
     resource = _normalize_keys(resource)
 
+    metadata  = resource.get("metadata", {})
+    pod_name  = metadata.get("name", "unknown")
+    namespace = metadata.get("namespace", "default")
+
     findings = []
     spec = resource.get("spec", {})
     containers = spec.get("containers") or \
                  spec.get("template", {}).get("spec", {}).get("containers", [])
 
     for container in containers:
-        findings.extend(check_root_user(container))
-        findings.extend(check_privileged(container))
-        findings.extend(check_privilege_escalation(container))
-        findings.extend(check_read_only_fs(container))
+        c_findings = []
+        c_findings.extend(check_root_user(container))
+        c_findings.extend(check_privileged(container))
+        c_findings.extend(check_privilege_escalation(container))
+        c_findings.extend(check_read_only_fs(container))
+
+        # The rules only know the container name. Stamp the real pod identity
+        # (namespace + pod name) so "Resources Affected" counts unique pods —
+        # e.g. Pod A with root + privileged = 2 findings but 1 resource.
+        for f in c_findings:
+            f.resource_name = pod_name
+            f.namespace = namespace
+        findings.extend(c_findings)
 
     return findings
 
