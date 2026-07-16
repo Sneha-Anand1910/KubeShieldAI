@@ -26,6 +26,7 @@ How to test:
 import os
 import tempfile
 import logging
+from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -67,30 +68,42 @@ app.add_middleware(
 # ═══════════════════════════════════════════════════════════════════════════
 
 class AnalyzeRequest(BaseModel):
-    kubeconfig_content: str
+    # Optional: if omitted, security uses the kubeconfig mounted into the
+    # container (or an in-cluster ServiceAccount) to scan the live cluster.
+    kubeconfig_content: Optional[str] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # KUBERNETES CLIENT LOADER
 # ═══════════════════════════════════════════════════════════════════════════
 
-def load_clients(kubeconfig_str: str):
+def load_clients(kubeconfig_str: Optional[str] = None):
     """
-    Write kubeconfig to a temp file, load it, delete the file immediately.
+    Build Kubernetes API clients.
+
+    - If kubeconfig_str is provided, write it to a temp file, load it, delete it
+      immediately (never persisted beyond this call).
+    - Otherwise use the kubeconfig mounted into the container at ~/.kube/config
+      (or an in-cluster ServiceAccount when running as a pod).
+
     Returns (CoreV1Api, RbacAuthorizationV1Api, NetworkingV1Api)
-
-    The kubeconfig is NEVER persisted to disk beyond this function call.
     """
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False
-    ) as f:
-        f.write(kubeconfig_str)
-        tmp = f.name
-
-    try:
-        config.load_kube_config(config_file=tmp)
-    finally:
-        os.unlink(tmp)   # always delete, even if load_kube_config raises
+    if kubeconfig_str:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            f.write(kubeconfig_str)
+            tmp = f.name
+        try:
+            config.load_kube_config(config_file=tmp)
+        finally:
+            os.unlink(tmp)   # always delete, even if load_kube_config raises
+    else:
+        # No kubeconfig passed — use the mounted config or in-cluster credentials
+        try:
+            config.load_incluster_config()
+        except Exception:
+            config.load_kube_config()   # default path: ~/.kube/config (mounted)
 
     return (
         client.CoreV1Api(),
@@ -237,15 +250,16 @@ async def analyze_network_endpoint(req: AnalyzeRequest):
 # ── Full combined analysis ──────────────────────────────────────────────────
 
 @app.post("/analyze")
-async def analyze_all(req: AnalyzeRequest):
+async def analyze_all(req: AnalyzeRequest | None = None):
     """
     Run full security analysis — all modules — against the live cluster.
 
+    Called with no body (gateway) → uses the mounted kubeconfig.
     Each analyzer is wrapped independently so a failure in one module
     (e.g. RBAC API call fails) does not block findings from other modules.
     """
     try:
-        v1, rbac_v1, net_v1 = load_clients(req.kubeconfig_content)
+        v1, rbac_v1, net_v1 = load_clients(req.kubeconfig_content if req else None)
         cluster_info = get_cluster_info(v1)
 
         all_findings: list[Finding] = []
