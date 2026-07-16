@@ -8,14 +8,16 @@ to the correct microservice internally.
 Runs on port 8000.
 """
 
-from datetime import timezone
+import hashlib
+from datetime import datetime, timezone
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 import httpx
 import os
-from db import init_db, get_session, ScanHistory
+from db import init_db, get_session, ScanHistory, FindingState, ChatMessage, RemediationCache
 
 app = FastAPI(title="KubeShield Gateway")
 
@@ -41,8 +43,6 @@ AI_URL        = os.getenv("AI_SERVICE_URL",         "http://localhost:8004")
 
 
 # ── /api/ingest/live ───────────────────────────────────────────────────────
-# React frontend calls this when user clicks "Start live cluster scan"
-# Gateway → ingestion-service → returns parsed resources
 @app.post("/api/ingest/live")
 async def ingest_live():
     async with httpx.AsyncClient(timeout=30) as client:
@@ -55,8 +55,6 @@ async def ingest_live():
 
 
 # ── /api/ingest/yaml ───────────────────────────────────────────────────────
-# React frontend calls this when user uploads a YAML file
-# Gateway → ingestion-service → PyYAML parse → returns parsed resources
 @app.post("/api/ingest/yaml")
 async def ingest_yaml(file: UploadFile = File(...)):
     contents = await file.read()
@@ -70,10 +68,9 @@ async def ingest_yaml(file: UploadFile = File(...)):
             return r.json()
         except httpx.ConnectError:
             raise HTTPException(503, "ingestion-service is not running")
-        
+
+
 # ── /api/ingest/namespaces ────────────────────────────────────────────────
-# React frontend polls this every 30s to render the live namespace/pod graph
-# Gateway → ingestion-service → returns namespaces + pod list + cluster_info
 @app.get("/api/ingest/namespaces")
 async def ingest_namespaces():
     async with httpx.AsyncClient(timeout=15) as client:
@@ -85,45 +82,158 @@ async def ingest_namespaces():
             raise HTTPException(503, "ingestion-service is not running")
 
 
+# ── Finding normalization ──────────────────────────────────────────────────
+# security-service can emit findings in two shapes depending on the build:
+#   Schema A (repo source): severity / title / module / resource_name /
+#                            evidence / remediation_hint
+#   Schema B (frontend):     Severity / Issue  / check  / resource /
+#                            Detail   / Recommendation
+# React pages, scoring-service, and finding_id/status all rely on stable
+# field names, so we normalize every finding to a superset carrying BOTH
+# forms before anything else touches it.
+
+_CATEGORY_FROM_MODULE = {
+    "rbac":             "RBAC",
+    "pod":              "Pod Security",
+    "pods":             "Pod Security",
+    "pod security":     "Pod Security",
+    "secret":           "Secrets",
+    "secrets":          "Secrets",
+    "network":          "Network",
+    "networking":       "Network",
+    "service exposure": "Network",
+}
+
+
+def _pick(f: dict, *keys, default=""):
+    for k in keys:
+        v = f.get(k)
+        if v not in (None, ""):
+            return v
+    return default
+
+
+def normalize_finding(f: dict) -> dict:
+    """Return a finding carrying BOTH capital-case (UI/scoring) and lowercase
+    (AI model) keys so every downstream consumer finds what it expects."""
+    severity = str(_pick(f, "Severity", "severity", default="Low")).strip().capitalize()
+    module_raw = _pick(f, "check", "module", "category", default="Unknown")
+    category = _CATEGORY_FROM_MODULE.get(str(module_raw).strip().lower(), module_raw)
+    issue    = _pick(f, "Issue", "title", "issue")
+    resource = _pick(f, "resource", "resource_name", "Resource")
+    detail   = _pick(f, "Detail", "evidence", "detail")
+    reco     = _pick(f, "Recommendation", "remediation_hint", "recommendation")
+
+    return {
+        **f,
+        # Schema B (React pages + scoring-service)
+        "Severity":       severity,
+        "Issue":          issue,
+        "check":          category,
+        "resource":       resource,
+        "Detail":         detail,
+        "Recommendation": reco,
+        # Schema A (AI-service Finding model)
+        "severity":       severity,
+        "module":         _pick(f, "module", default=module_raw),
+        "title":          issue,
+        "resource_name":  resource,
+        "evidence":       detail,
+        "remediation_hint": reco,
+    }
+
+
+def compute_finding_id(finding: dict) -> str:
+    """
+    Stable ID for a finding, independent of any one scan — same rule +
+    resource + namespace should hash to the same ID every time, so a
+    user's acknowledge/won't-fix decision survives rescans.
+    Uses the normalized (Schema A) fields so it's stable regardless of
+    which schema security-service happened to emit.
+    """
+    raw = (
+        f"{finding.get('module', '')}:"
+        f"{finding.get('title', '')}:"
+        f"{finding.get('namespace', '')}:"
+        f"{finding.get('resource_name', '')}"
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
 # ── /api/analyze ──────────────────────────────────────────────────────────
-# After ingestion, the frontend triggers analysis
-# Gateway → security-service /analyze → scoring-service /score → combined response
+# After ingestion, the frontend triggers analysis.
+# Gateway → security-service /analyze → scoring-service /score → combined response.
+#
+# security-service does NOT read its own kubeconfig — it expects the
+# gateway to read ~/.kube/config and forward it as kubeconfig_content
+# on every request. security-service only holds it in a temp file for
+# the duration of the request and deletes it immediately after
+# (see security-service/app.py: load_clients()). Live scan is the
+# primary path; YAML upload is a fallback.
 @app.post("/api/analyze")
 async def analyze(body: dict):
-    async with httpx.AsyncClient(timeout=30) as client:
-        # Step 1 — security-service
-        try:
-            kubeconfig_path = os.path.expanduser("~/.kube/config")
-            with open(kubeconfig_path, "r") as f:
-                kubeconfig_str = f.read()
+    kubeconfig_path = os.path.expanduser("~/.kube/config")
+    try:
+        with open(kubeconfig_path, "r") as f:
+            kubeconfig_str = f.read()
+    except FileNotFoundError:
+        raise HTTPException(500, f"kubeconfig not found at {kubeconfig_path}")
 
+    async with httpx.AsyncClient(timeout=180) as client:
+        try:
             sec_r = await client.post(
                 f"{SECURITY_URL}/analyze",
-                json={"kubeconfig_content": kubeconfig_str}
+                json={"kubeconfig_content": kubeconfig_str},
             )
-            sec_r.raise_for_status()
-            security_result = sec_r.json()
         except httpx.ConnectError:
             raise HTTPException(503, "security-service is not running")
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"security-service request failed: {e}")
 
-        # Step 2 — scoring-service
-        # ── Scoring bypassed for now ──────────────────────────────
-        # try:
-        #     score_r = await client.post(f"{SCORING_URL}/score", ...)
-        #     scoring_result = score_r.json()
-        # except httpx.ConnectError:
-        #     raise HTTPException(503, "scoring-service is not running")
-        # ── Save this scan to history ──────────────────────────────────────
+    result = sec_r.json()
+
+    # Normalize every finding so the UI, scoring, AI, and finding_id all agree
+    findings     = [normalize_finding(f) for f in result.get("findings", [])]
+    by_severity  = result.get("by_severity") or {}
+    by_module    = result.get("by_module") or {}
+    cluster_info = result.get("cluster_info") or {}
+
+    # Attach a stable finding_id + any persisted status (acknowledged /
+    # won't fix / false positive) to each finding.
+    db = get_session()
+    try:
+        for f in findings:
+            f["finding_id"] = compute_finding_id(f)
+            state = db.query(FindingState).filter_by(finding_id=f["finding_id"]).first()
+            f["status"] = state.status if state else "open"
+    finally:
+        db.close()
+
+    # ── Call scoring-service to get the real risk score ──────────────────
+    # A scoring failure must not break the scan — fall back to a null score.
+    score: dict = {"risk_score": None}
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            score_r = await client.post(
+                f"{SCORING_URL}/score",
+                json={"findings": findings, "summary": {"by_severity": by_severity}},
+            )
+            if score_r.status_code == 200:
+                score = score_r.json()
+        except httpx.HTTPError:
+            pass  # scoring-service down/unreachable — keep the null score
+
+    # ── Persist this scan to history ──────────────────────────────────────
     try:
         db = get_session()
         entry = ScanHistory(
-            resource_count=security_result.get("total_issues", 0),
-            findings_count=len(security_result.get("findings", [])),
-            risk_score=None,   # scoring is currently bypassed
-            grade=None,
+            resource_count=len(findings),
+            findings_count=len(findings),
+            risk_score=score.get("risk_score"),
+            grade=score.get("grade"),
             status="completed",
-            by_severity=security_result.get("by_severity", {}),
-            by_module=security_result.get("by_module", {}),
+            by_severity=by_severity,
+            by_module=by_module,
         )
         db.add(entry)
         db.commit()
@@ -133,13 +243,48 @@ async def analyze(body: dict):
         print(f"Warning: failed to save scan history: {e}")
 
     return {
-        "findings":     security_result["findings"],
-        "cluster_info": security_result.get("cluster_info", {}),
-        "total_issues": security_result.get("total_issues", 0),
-        "by_severity":  security_result.get("by_severity", {}),
-        "by_module":    security_result.get("by_module", {}),
-        "score":        None,
+        "findings":     findings,
+        "cluster_info": cluster_info,
+        "total_issues": len(findings),
+        "analyzed":     len(findings),
+        "skipped":      0,
+        "by_severity":  by_severity,
+        "by_module":    by_module,
+        "score":        score,
     }
+
+
+class FindingStatusUpdate(BaseModel):
+    status: str            # "open" | "acknowledged" | "wont_fix" | "false_positive"
+    note: str | None = None
+
+
+VALID_FINDING_STATUSES = {"open", "acknowledged", "wont_fix", "false_positive"}
+
+
+# ── /api/findings/{finding_id}/status ───────────────────────────────────────
+# Frontend calls this when a user marks a finding as acknowledged, won't-fix,
+# or false-positive. Persists across rescans since it's keyed on finding_id,
+# not on any one scan.
+@app.patch("/api/findings/{finding_id}/status")
+async def update_finding_status(finding_id: str, body: FindingStatusUpdate):
+    if body.status not in VALID_FINDING_STATUSES:
+        raise HTTPException(400, f"status must be one of {sorted(VALID_FINDING_STATUSES)}")
+
+    db = get_session()
+    try:
+        state = db.query(FindingState).filter_by(finding_id=finding_id).first()
+        if state:
+            state.status = body.status
+            state.note = body.note
+            state.updated_at = datetime.now(timezone.utc)
+        else:
+            state = FindingState(finding_id=finding_id, status=body.status, note=body.note)
+            db.add(state)
+        db.commit()
+        return {"finding_id": finding_id, "status": body.status}
+    finally:
+        db.close()
 
 
 @app.get("/api/history")
@@ -160,6 +305,7 @@ async def get_history():
                     "resources": r.resource_count,
                     "findings":  r.findings_count,
                     "score":     r.risk_score if r.risk_score is not None else 0,
+                    "grade":     r.grade,
                     "status":    r.status,
                 }
                 for r in rows
@@ -167,8 +313,8 @@ async def get_history():
         }
     finally:
         db.close()
-        
-        
+
+
 # ── /api/ai/explain ───────────────────────────────────────────────────────
 # React AI page sends findings, gateway forwards to ai-service → Gemini
 @app.post("/api/ai/explain")
@@ -180,6 +326,164 @@ async def ai_explain(body: dict):
             return r.json()
         except httpx.ConnectError:
             raise HTTPException(503, "ai-service is not running")
+
+
+# ── /api/ai/remediate ───────────────────────────────────────────────────────
+# Frontend sends one finding (already carries finding_id from /api/analyze).
+# Gateway calls ai-service, which internally branches on severity:
+#   Low/Medium    → explanation + inline YAML snippet
+#   High/Critical → full deployable YAML fix + independent validation
+# Result is cached by finding_id so the download endpoint doesn't need to
+# regenerate it, and so re-opening a finding shows the last generated fix.
+@app.post("/api/ai/remediate")
+async def remediate(body: dict):
+    finding = body.get("finding")
+    if not finding or "finding_id" not in finding:
+        raise HTTPException(400, "body must include a finding with a finding_id")
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        try:
+            r = await client.post(f"{AI_URL}/remediate", json={"finding": finding})
+            r.raise_for_status()
+            result = r.json()
+        except httpx.ConnectError:
+            raise HTTPException(503, "ai-service is not running")
+
+    db = get_session()
+    try:
+        finding_id = finding["finding_id"]
+        cache = db.query(RemediationCache).filter_by(finding_id=finding_id).first()
+        if not cache:
+            cache = RemediationCache(finding_id=finding_id)
+            db.add(cache)
+        cache.mode = result.get("mode")
+        cache.explanation = result.get("explanation")
+        cache.yaml_snippet = result.get("yaml_snippet")
+        cache.yaml_fix = result.get("yaml_fix")
+        cache.validated = str(result.get("validated"))
+        cache.validation_notes = result.get("validation_notes")
+        cache.generated_at = datetime.now(timezone.utc)
+        db.commit()
+    finally:
+        db.close()
+
+    return result
+
+
+# ── /api/ai/remediate/{finding_id}/download ─────────────────────────────────
+# Returns the last-generated YAML fix for a finding as a downloadable file.
+# Requires /api/ai/remediate to have been called for this finding at least once.
+@app.get("/api/ai/remediate/{finding_id}/download")
+async def download_remediation(finding_id: str):
+    db = get_session()
+    try:
+        cache = db.query(RemediationCache).filter_by(finding_id=finding_id).first()
+    finally:
+        db.close()
+
+    if not cache or not cache.yaml_fix:
+        raise HTTPException(404, "No generated fix found for this finding yet — call /api/ai/remediate first")
+
+    return Response(
+        content=cache.yaml_fix,
+        media_type="application/x-yaml",
+        headers={"Content-Disposition": f'attachment; filename="fix-{finding_id}.yaml"'},
+    )
+
+
+def _load_chat_history(db, scope_type: str, scope_id: str):
+    rows = (
+        db.query(ChatMessage)
+        .filter_by(scope_type=scope_type, scope_id=scope_id)
+        .order_by(ChatMessage.timestamp.asc())
+        .all()
+    )
+    return [{"role": r.role, "content": r.content} for r in rows]
+
+
+def _save_chat_turn(db, scope_type: str, scope_id: str, role: str, content: str):
+    db.add(ChatMessage(scope_type=scope_type, scope_id=scope_id, role=role, content=content))
+    db.commit()
+
+
+async def _call_ai_chat(context: str, chat_history: list, message: str) -> str:
+    async with httpx.AsyncClient(timeout=60) as client:
+        try:
+            r = await client.post(
+                f"{AI_URL}/chat",
+                json={"context": context, "chat_history": chat_history, "message": message},
+            )
+            r.raise_for_status()
+            return r.json()["reply"]
+        except httpx.ConnectError:
+            raise HTTPException(503, "ai-service is not running")
+
+
+# ── /api/ai/chat/finding ─────────────────────────────────────────────────────
+# Deep-dive chat scoped to one finding. Context = that finding's full detail.
+# History persists across requests, keyed on finding_id.
+@app.post("/api/ai/chat/finding")
+async def chat_finding(body: dict):
+    finding = body.get("finding")
+    message = body.get("message")
+    if not finding or "finding_id" not in finding or not message:
+        raise HTTPException(400, "body must include finding (with finding_id) and message")
+
+    finding_id = finding["finding_id"]
+    context = (
+        f"Finding: {finding.get('title')}\n"
+        f"Severity: {finding.get('severity')}\n"
+        f"Module: {finding.get('module')}\n"
+        f"Resource: {finding.get('resource_name')} (namespace: {finding.get('namespace')})\n"
+        f"Evidence: {finding.get('evidence', 'N/A')}\n"
+        f"Remediation hint: {finding.get('remediation_hint', 'N/A')}"
+    )
+
+    db = get_session()
+    try:
+        history = _load_chat_history(db, "finding", finding_id)
+        reply = await _call_ai_chat(context, history, message)
+        _save_chat_turn(db, "finding", finding_id, "user", message)
+        _save_chat_turn(db, "finding", finding_id, "assistant", reply)
+    finally:
+        db.close()
+
+    return {"reply": reply}
+
+
+# ── /api/ai/chat/cluster ────────────────────────────────────────────────────
+# Cross-cutting chat scoped to the whole scan. Context = the scoring
+# summary the frontend already has (top priorities, risk score, grade) —
+# not the raw findings list, to keep every message's payload small.
+@app.post("/api/ai/chat/cluster")
+async def chat_cluster(body: dict):
+    scan_id = body.get("scan_id")
+    message = body.get("message")
+    summary = body.get("summary", {})
+    if not scan_id or not message:
+        raise HTTPException(400, "body must include scan_id and message")
+
+    top_priorities = summary.get("top_priorities", [])
+    priorities_text = "\n".join(
+        f"- {p.get('title', p)} (impact: {p.get('impact_score', '?')})" for p in top_priorities
+    ) or "No priority data available."
+
+    context = (
+        f"Overall risk score: {summary.get('risk_score', '?')} (grade: {summary.get('grade', '?')})\n"
+        f"Severity breakdown: {summary.get('by_severity', {})}\n"
+        f"Top priority findings:\n{priorities_text}"
+    )
+
+    db = get_session()
+    try:
+        history = _load_chat_history(db, "cluster", scan_id)
+        reply = await _call_ai_chat(context, history, message)
+        _save_chat_turn(db, "cluster", scan_id, "user", message)
+        _save_chat_turn(db, "cluster", scan_id, "assistant", reply)
+    finally:
+        db.close()
+
+    return {"reply": reply}
 
 
 # ── /api/health ───────────────────────────────────────────────────────────
