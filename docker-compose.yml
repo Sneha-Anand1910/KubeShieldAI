@@ -52,6 +52,17 @@ services:
       - ai-service
     networks:
       - kubeshield-net
+  # ── postgres (scan-history database used by the gateway's db.py) ─────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=kubeshield
+      - POSTGRES_PASSWORD=changeme
+      - POSTGRES_DB=kubeshield
+    ports:
+      - "5432:5432"
+    networks:
+      - kubeshield-net
   # ── gateway (FastAPI, only service the React frontend talks to) ──────────
   gateway:
     build: ./gateway
@@ -64,10 +75,12 @@ services:
       - SCORING_SERVICE_URL=http://scoring-service:8001
       - AI_SERVICE_URL=http://ai-service:8000
       - INGESTION_SERVICE_URL=http://ingestion-service:8001
+      - DATABASE_URL=postgresql://kubeshield:changeme@postgres:5432/kubeshield
     depends_on:
       - security-service
       - scoring-service
       - ai-service
+      - postgres
     networks:
       - kubeshield-net
   # ── frontend (React/Vite, served via nginx) ──────────────────────────────
