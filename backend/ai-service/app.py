@@ -159,7 +159,7 @@ async def explain(req: ExplainRequest):
         return mock_response(req.findings)
 
     try:
-        model = genai.GenerativeModel("gemini-3.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         prompt = build_prompt(req.findings, req.cluster_context)
         logger.info(f"Calling Gemini for {len(req.findings)} findings")
 
@@ -271,7 +271,7 @@ Respond ONLY in this exact JSON format (no markdown, no extra text):
 
 
 def _call_gemini_json(prompt: str) -> dict:
-    model = genai.GenerativeModel("gemini-3.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash")
     response = model.generate_content(
         prompt,
         generation_config=genai.GenerationConfig(temperature=0.2, max_output_tokens=2048),
@@ -385,7 +385,7 @@ async def chat(req: ChatRequest):
     )
 
     try:
-        model = genai.GenerativeModel("gemini-3.5-flash", system_instruction=system_preamble)
+        model = genai.GenerativeModel("gemini-2.5-flash", system_instruction=system_preamble)
         history = [{"role": ("model" if m.role == "assistant" else "user"), "parts": [m.content]}
                    for m in req.chat_history]
         convo = model.start_chat(history=history)
