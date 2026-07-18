@@ -1,5 +1,4 @@
 """
-ai-service — KubeShield AI
 POST /explain  →  Gemini-powered remediation explanation
 POST /health   →  liveness probe
 """
