@@ -8,10 +8,13 @@ import os
 import json
 import logging
 from typing import Optional
+from dotenv import load_dotenv
 import google.generativeai as genai
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ai-service")
@@ -37,9 +40,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # ── Pydantic models ────────────────────────────────────────────────────────
-
 class Finding(BaseModel):
     id: str
     title: str
@@ -65,7 +66,6 @@ class ExplainResponse(BaseModel):
 
 
 # ── Prompt builder ─────────────────────────────────────────────────────────
-
 def build_prompt(findings: list[Finding], cluster_context: str) -> str:
     findings_text = ""
     for i, f in enumerate(findings, 1):
@@ -81,17 +81,17 @@ Finding {i}:
 
     return f"""You are a Kubernetes security expert. Analyze the following security findings from a {cluster_context} and provide:
 
-1. A concise overall explanation of what these findings mean for the cluster's security posture (2-3 sentences, plain English for a DevOps engineer).
+1. A concise overall explanation of what these findings mean for the cluster's security posture (plain English for a DevOps engineer).
 2. A prioritized remediation checklist (ordered from most critical to least).
-3. 2-3 concrete YAML examples showing the secure configuration for the most critical finding.
-4. A one-sentence severity summary.
+3. Few concrete YAML examples showing the secure configuration for the most critical finding.
+4. And a suitable severity summary.
 
 FINDINGS:
 {findings_text}
 
 Respond ONLY in this exact JSON format (no markdown, no extra text):
 {{
-  "explanation": "<2-3 sentence plain English summary>",
+  "explanation": "<Plain English summary>",
   "remediation": [
     "<step 1 — most critical>",
     "<step 2>",
@@ -105,41 +105,7 @@ Respond ONLY in this exact JSON format (no markdown, no extra text):
   "severity_summary": "<one sentence>"
 }}"""
 
-
-# ── Mock response (when no API key) ───────────────────────────────────────
-
-def mock_response(findings: list[Finding]) -> ExplainResponse:
-    modules = list(set(f.module for f in findings))
-    severities = list(set(f.severity for f in findings))
-    return ExplainResponse(
-        explanation=(
-            f"Your cluster has {len(findings)} security finding(s) across "
-            f"{', '.join(modules)} module(s). The most critical issues involve "
-            f"{severities[0] if severities else 'unknown'} severity misconfigurations "
-            "that could allow privilege escalation or unauthorized data access. "
-            "Immediate remediation is recommended before production deployment."
-        ),
-        remediation=[
-            "Remove wildcard (*) permissions from all non-system RoleBindings",
-            "Set runAsNonRoot: true and runAsUser: 1000 in all pod securityContexts",
-            "Replace base64-encoded secrets in env vars with secretKeyRef references",
-            "Add NetworkPolicy resources to restrict service exposure",
-            "Audit cluster-admin bindings and remove unnecessary assignments",
-        ],
-        examples=[
-            "# Secure pod securityContext\napiVersion: v1\nkind: Pod\nspec:\n  securityContext:\n    runAsNonRoot: true\n    runAsUser: 1000\n    fsGroup: 2000\n  containers:\n  - name: app\n    securityContext:\n      allowPrivilegeEscalation: false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [ALL]",
-            "# Secure secret reference (not hardcoded)\nenv:\n- name: DB_PASSWORD\n  valueFrom:\n    secretKeyRef:\n      name: db-credentials\n      key: password",
-        ],
-        severity_summary=(
-            f"This cluster has {len(findings)} active security finding(s) "
-            "requiring immediate attention to prevent privilege escalation and data exposure."
-        ),
-        findings_count=len(findings),
-    )
-
-
 # ── Routes ─────────────────────────────────────────────────────────────────
-
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "ai-service", "gemini_configured": bool(GEMINI_API_KEY)}
@@ -153,10 +119,8 @@ async def explain(req: ExplainRequest):
     if len(req.findings) > 50:
         raise HTTPException(status_code=400, detail="Max 50 findings per request")
 
-    # Use mock when no API key (dev mode)
     if not GEMINI_API_KEY:
-        logger.info("Using mock response (no GEMINI_API_KEY)")
-        return mock_response(req.findings)
+        raise HTTPException(503, "GEMINI_API_KEY is not configured — AI explanations are unavailable")
 
     try:
         model = genai.GenerativeModel("gemini-3.5-flash")
@@ -191,14 +155,9 @@ async def explain(req: ExplainRequest):
     except json.JSONDecodeError as e:
         logger.error(f"JSON parse error from Gemini: {e}")
         logger.error(f"Raw response: {response.text[:500]}")
-        # Fallback to mock on parse failure
-        return mock_response(req.findings)
+        raise HTTPException(502, "AI service returned an unparseable response")
 
 # ── Per-finding remediation (severity-gated) ────────────────────────────────
-# Low/Medium → explanation + inline YAML snippet (cheap, one call)
-# High/Critical → full deployable YAML fix + a second, independent
-# validation call checking the fix is correct before it's shown as "verified"
-
 HIGH_CRIT = {"High", "Critical", "HIGH", "CRITICAL"}
 
 
@@ -227,7 +186,7 @@ Evidence: {f.evidence or 'N/A'}
 
 Respond ONLY in this exact JSON format (no markdown, no extra text):
 {{
-  "explanation": "<2-3 sentence plain-English explanation of the risk>",
+  "explanation": "<Plain English summary>",
   "yaml_snippet": "<a short YAML snippet showing the fixed field(s), as a single string with \\n newlines>"
 }}"""
 
@@ -246,7 +205,7 @@ that fixes this specific issue for this specific resource.
 
 Respond ONLY in this exact JSON format (no markdown, no extra text):
 {{
-  "explanation": "<2-3 sentence plain-English explanation of the risk and the fix>",
+  "explanation": "<Plain English summary>",
   "yaml_fix": "<the complete corrected manifest as a single string with \\n newlines>"
 }}"""
 
@@ -290,21 +249,8 @@ async def remediate(req: RemediateRequest):
     high_priority = f.severity in HIGH_CRIT
 
     if not GEMINI_API_KEY:
-        logger.info("Using mock remediation (no GEMINI_API_KEY)")
-        if high_priority:
-            return RemediateResponse(
-                mode="fix",
-                explanation=f"Mock explanation for {f.title}.",
-                yaml_fix="# mock corrected manifest\napiVersion: v1\nkind: Pod\nspec: {}",
-                validated=True,
-                validation_notes="Mock validation — no live model call.",
-            )
-        return RemediateResponse(
-            mode="explain",
-            explanation=f"Mock explanation for {f.title}.",
-            yaml_snippet="securityContext:\n  runAsNonRoot: true",
-        )
-
+        raise HTTPException(503, "GEMINI_API_KEY is not configured — AI remediation is unavailable")
+    
     try:
         if not high_priority:
             data = _call_gemini_json(_explain_prompt(f, req.cluster_context))
@@ -335,12 +281,6 @@ async def remediate(req: RemediateRequest):
 
 
 def _raise_ai_error(e: Exception, endpoint: str):
-    """
-    Turn a Gemini exception into a clear HTTP error. Quota/rate-limit errors
-    (HTTP 429 from Google) get surfaced as 429 with a plain-English message,
-    so the frontend can show something better than 'AI service error: ...'
-    stack trace text. Everything else stays a 502.
-    """
     msg = str(e)
     logger.error(f"Gemini API error in {endpoint}: {msg}")
     if "429" in msg or "quota" in msg.lower() or "ResourceExhausted" in type(e).__name__:
@@ -354,9 +294,6 @@ def _raise_ai_error(e: Exception, endpoint: str):
 
 
 # ── Grounded chat ────────────────────────────────────────────────────────────
-# One shared endpoint. The gateway decides what "context" means — a single
-# finding's details, or a cluster-wide priority summary — and passes it in.
-
 class ChatMessage(BaseModel):
     role: str       # "user" | "assistant"
     content: str
@@ -375,7 +312,7 @@ class ChatResponse(BaseModel):
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     if not GEMINI_API_KEY:
-        return ChatResponse(reply="(mock) I'd explain that here, but GEMINI_API_KEY isn't set.")
+        raise HTTPException(503, "GEMINI_API_KEY is not configured — AI chat is unavailable")
 
     system_preamble = (
         "You are a Kubernetes security assistant for the KubeShield tool. "
