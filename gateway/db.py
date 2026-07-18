@@ -1,17 +1,17 @@
-"""
-Database layer for KubeShield Gateway.
-Stores one row per completed scan so the History page has real data.
-"""
-
 import os
 from datetime import datetime, timezone
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://kubeshield:changeme@localhost:5432/kubeshield",
-)
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Add it to gateway/.env "
+        "(e.g. DATABASE_URL=postgresql://user:pass@host/db?sslmode=require)"
+    )
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -30,28 +30,19 @@ class ScanHistory(Base):
     status         = Column(String, default="completed")
     by_severity    = Column(JSON, nullable=True)
     by_module      = Column(JSON, nullable=True)
+    created_by     = Column(String, nullable=True, default="unknown")
 
-
+#keeps track of the state of each finding (acknowledged, wont_fix, false_positive)
 class FindingState(Base):
-    """
-    Tracks user decisions on a finding (acknowledged / won't fix / false
-    positive) keyed by a stable finding_id, so the status persists across
-    rescans instead of resetting every time a new scan runs.
-    """
     __tablename__ = "finding_state"
 
     finding_id = Column(String, primary_key=True)
-    status     = Column(String, default="open")   # open | acknowledged | wont_fix | false_positive
+    status     = Column(String, default="open")  
     note       = Column(String, nullable=True)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class ChatMessage(Base):
-    """
-    One row per chat turn. scope_type is 'finding' or 'cluster'; scope_id is
-    the finding_id or a scan/session id — lets both chat surfaces share one
-    table without their histories mixing.
-    """
     __tablename__ = "chat_messages"
 
     id         = Column(Integer, primary_key=True, autoincrement=True)
@@ -63,11 +54,6 @@ class ChatMessage(Base):
 
 
 class RemediationCache(Base):
-    """
-    Caches the last generated fix per finding_id so the frontend can offer a
-    'download corrected YAML' button without regenerating the fix on every
-    click (and without needing to re-call the AI service just to download).
-    """
     __tablename__ = "remediation_cache"
 
     finding_id       = Column(String, primary_key=True)
@@ -78,6 +64,14 @@ class RemediationCache(Base):
     validated        = Column(String, nullable=True)   # store as string to keep it simple across DBs
     validation_notes = Column(String, nullable=True)
     generated_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    
+class ScoringCache(Base):
+    __tablename__ = "scoring_cache"
+
+    batch_hash     = Column(String, primary_key=True)
+    score          = Column(JSON, nullable=True)
+    finding_count  = Column(Integer, default=0)
+    created_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 def init_db():
