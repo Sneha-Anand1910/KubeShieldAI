@@ -1,8 +1,4 @@
 """
-analyzers/rbac/rules/wildcard_check.py
-=======================================
-Detects wildcard (*) permissions on Roles and ClusterRoles.
-
 Rules:
     RBAC-WILD-001  ClusterRole with full wildcard (* verbs + * resources)
     RBAC-WILD-002  ClusterRole with wildcard verbs on Secrets specifically
@@ -23,6 +19,7 @@ SYSTEM_PREFIXES = [
     "canal",
     "cilium",
 ]
+BUILTIN_DEFAULT_ROLES = {"cluster-admin", "admin", "edit", "view"}
 
 # Resources that are sensitive even without full wildcard
 SENSITIVE_RESOURCES = {
@@ -35,11 +32,8 @@ SENSITIVE_RESOURCES = {
     "clusterrolebindings",
     "rolebindings",
 }
-
-
 def is_system_role(name: str) -> bool:
-    return any(name.startswith(p) for p in SYSTEM_PREFIXES)
-
+    return any(name.startswith(p) for p in SYSTEM_PREFIXES) or name in BUILTIN_DEFAULT_ROLES
 
 def check(rbac_v1: RbacAuthorizationV1Api) -> list[Finding]:
     findings = []
