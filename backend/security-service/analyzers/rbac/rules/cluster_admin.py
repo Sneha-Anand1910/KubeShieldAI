@@ -1,26 +1,19 @@
 """
-analyzers/rbac/rules/cluster_admin.py
-======================================
-Detects dangerous cluster-admin bindings.
-
 Rules:
     RBAC-CADM-001  ServiceAccount with cluster-admin outside system namespaces
     RBAC-CADM-002  Regular user with cluster-admin binding
     RBAC-CADM-003  Anonymous / unauthenticated group with cluster-admin
     RBAC-CADM-004  Broad group (system:authenticated) with cluster-admin
 """
-
 from kubernetes.client import RbacAuthorizationV1Api
 from models.findings import Finding, make_finding
 
-# Namespaces where cluster-admin on a SA is expected/acceptable
 SAFE_NAMESPACES = {
     "kube-system",
     "kube-public",
     "kube-node-lease",
 }
 
-# System users that legitimately hold cluster-admin
 SAFE_USERS = {
     "kubernetes-admin",
     "admin",
@@ -35,7 +28,6 @@ def check(rbac_v1: RbacAuthorizationV1Api) -> list[Finding]:
 
     for crb in crbs.items:
         crb_name = crb.metadata.name
-
         # Only care about bindings that grant cluster-admin
         if crb.role_ref.name != "cluster-admin":
             continue

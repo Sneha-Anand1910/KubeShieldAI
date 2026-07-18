@@ -1,8 +1,4 @@
 """
-analyzers/rbac/rules/privilege_esc.py
-======================================
-Detects privilege escalation paths via RBAC.
-
 Rules:
     RBAC-ESC-001  Role can modify RBAC resources (can grant itself more permissions)
     RBAC-ESC-002  Role allows pod exec (shell access to any container)
@@ -14,7 +10,7 @@ from kubernetes.client import RbacAuthorizationV1Api
 from models.findings import Finding, make_finding
 
 SYSTEM_PREFIXES = ["system:", "kubeadm:", "calico", "flannel"]
-
+BUILTIN_DEFAULT_ROLES = {"cluster-admin", "admin", "edit", "view"}
 # Verbs that allow modifying RBAC = self-escalation
 DANGEROUS_RBAC_VERBS = {"create", "update", "patch", "delete", "*"}
 
@@ -25,11 +21,8 @@ RBAC_RESOURCES = {
     "rolebindings",
     "clusterrolebindings",
 }
-
-
 def is_system_role(name: str) -> bool:
-    return any(name.startswith(p) for p in SYSTEM_PREFIXES)
-
+    return any(name.startswith(p) for p in SYSTEM_PREFIXES) or name in BUILTIN_DEFAULT_ROLES
 
 def check(rbac_v1: RbacAuthorizationV1Api) -> list[Finding]:
     findings = []

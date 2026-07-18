@@ -1,8 +1,4 @@
 """
-analyzers/rbac/rules/default_sa.py
-=====================================
-Detects insecure default service account configurations.
-
 Rules:
     RBAC-SA-001  Default SA automounts token (not explicitly disabled)
     RBAC-SA-002  Default SA has explicit RoleBinding granting it permissions
@@ -16,6 +12,7 @@ SKIP_NAMESPACES = {
     "kube-system",
     "kube-public",
     "kube-node-lease",
+    "local-path-storage",
 }
 
 
@@ -46,9 +43,19 @@ def check(rbac_v1: RbacAuthorizationV1Api) -> list[Finding]:
             continue
 
         automount = default_sa.automount_service_account_token
-
-        # None = unset = defaults to True in Kubernetes
         if automount is None or automount is True:
+            try:
+                pods = v1.list_namespaced_pod(ns_name)
+                in_use = any(
+                    (p.spec.service_account_name in (None, "default"))
+                    for p in pods.items
+                )
+            except Exception:
+                in_use = True  
+
+            if not in_use:
+                continue
+
             findings.append(make_finding(
                 id=f"RBAC-SA-{counter:03d}",
                 title=(
