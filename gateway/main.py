@@ -1,14 +1,5 @@
-"""
-KubeShield Gateway
-------------------
-This is the ONLY service the React frontend talks to.
-It receives requests from the browser and forwards them
-to the correct microservice internally.
-
-Runs on port 8000.
-"""
-
 import hashlib
+import yaml
 from datetime import datetime, timezone
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +8,9 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 import httpx
 import os
-from db import init_db, get_session, ScanHistory, FindingState, ChatMessage, RemediationCache
+import json
+from redis_client import redis_client, REMEDIATION_TTL_SECONDS, SCORING_TTL_SECONDS
+from db import init_db, get_session, ScanHistory, FindingState, ChatMessage, RemediationCache, ScoringCache
 
 app = FastAPI(title="KubeShield Gateway")
 
@@ -34,8 +27,6 @@ app.add_middleware(
 )
 
 # ── Internal service URLs ──────────────────────────────────────────────────
-# When running locally: these use localhost + different ports
-# When running on cluster: these use Kubernetes service names
 INGESTION_URL = os.getenv("INGESTION_SERVICE_URL", "http://localhost:8001")
 SECURITY_URL  = os.getenv("SECURITY_SERVICE_URL",  "http://localhost:8002")
 SCORING_URL   = os.getenv("SCORING_SERVICE_URL",   "http://localhost:8003")
@@ -83,15 +74,6 @@ async def ingest_namespaces():
 
 
 # ── Finding normalization ──────────────────────────────────────────────────
-# security-service can emit findings in two shapes depending on the build:
-#   Schema A (repo source): severity / title / module / resource_name /
-#                            evidence / remediation_hint
-#   Schema B (frontend):     Severity / Issue  / check  / resource /
-#                            Detail   / Recommendation
-# React pages, scoring-service, and finding_id/status all rely on stable
-# field names, so we normalize every finding to a superset carrying BOTH
-# forms before anything else touches it.
-
 _CATEGORY_FROM_MODULE = {
     "rbac":             "RBAC",
     "pod":              "Pod Security",
@@ -144,13 +126,6 @@ def normalize_finding(f: dict) -> dict:
 
 
 def compute_finding_id(finding: dict) -> str:
-    """
-    Stable ID for a finding, independent of any one scan — same rule +
-    resource + namespace should hash to the same ID every time, so a
-    user's acknowledge/won't-fix decision survives rescans.
-    Uses the normalized (Schema A) fields so it's stable regardless of
-    which schema security-service happened to emit.
-    """
     raw = (
         f"{finding.get('module', '')}:"
         f"{finding.get('title', '')}:"
@@ -160,16 +135,18 @@ def compute_finding_id(finding: dict) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def get_kubeconfig_user(kubeconfig_str: str) -> str:
+    try:
+        cfg = yaml.safe_load(kubeconfig_str) or {}
+        current_context_name = cfg.get("current-context")
+        for c in cfg.get("contexts", []) or []:
+            if c.get("name") == current_context_name:
+                return c.get("context", {}).get("user", "unknown")
+        return "unknown"
+    except Exception:
+        return "unknown"
+
 # ── /api/analyze ──────────────────────────────────────────────────────────
-# After ingestion, the frontend triggers analysis.
-# Gateway → security-service /analyze → scoring-service /score → combined response.
-#
-# security-service does NOT read its own kubeconfig — it expects the
-# gateway to read ~/.kube/config and forward it as kubeconfig_content
-# on every request. security-service only holds it in a temp file for
-# the duration of the request and deletes it immediately after
-# (see security-service/app.py: load_clients()). Live scan is the
-# primary path; YAML upload is a fallback.
 @app.post("/api/analyze")
 async def analyze(body: dict):
     kubeconfig_path = os.path.expanduser("~/.kube/config")
@@ -178,6 +155,8 @@ async def analyze(body: dict):
             kubeconfig_str = f.read()
     except FileNotFoundError:
         raise HTTPException(500, f"kubeconfig not found at {kubeconfig_path}")
+
+    scanned_by = get_kubeconfig_user(kubeconfig_str)
 
     async with httpx.AsyncClient(timeout=180) as client:
         try:
@@ -209,38 +188,24 @@ async def analyze(body: dict):
     finally:
         db.close()
 
-    # ── Call scoring-service to get the real risk score ──────────────────
-    # A scoring failure must not break the scan — fall back to a null score.
+    # security → (user reviews + marks status) → forward → scoring → AI.
     score: dict = {"risk_score": None}
-    async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            score_r = await client.post(
-                f"{SCORING_URL}/score",
-                json={"findings": findings, "summary": {"by_severity": by_severity}},
-            )
-            if score_r.status_code == 200:
-                score = score_r.json()
-        except httpx.HTTPError:
-            pass  # scoring-service down/unreachable — keep the null score
 
     # ── Persist this scan to history ──────────────────────────────────────
-    try:
-        db = get_session()
-        entry = ScanHistory(
-            resource_count=len(findings),
-            findings_count=len(findings),
-            risk_score=score.get("risk_score"),
-            grade=score.get("grade"),
-            status="completed",
-            by_severity=by_severity,
-            by_module=by_module,
-        )
-        db.add(entry)
-        db.commit()
-        db.close()
-    except Exception as e:
-        # Don't fail the whole scan just because history logging failed
-        print(f"Warning: failed to save scan history: {e}")
+    db = get_session()
+    entry = ScanHistory(
+        resource_count=len(findings),
+        findings_count=len(findings),
+        risk_score=None,
+        grade=None,
+        status="completed",
+        by_severity=by_severity,
+        by_module=by_module,
+        created_by=scanned_by,
+    )
+    db.add(entry)
+    db.commit()
+    db.close()
 
     return {
         "findings":     findings,
@@ -254,6 +219,72 @@ async def analyze(body: dict):
     }
 
 
+def compute_batch_hash(finding_ids: list[str]) -> str:
+    """Stable hash of a forwarded set of finding_ids, regardless of order —
+    lets us cache scoring results for a batch that's been forwarded before."""
+    raw = ",".join(sorted(finding_ids))
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+# ── /api/forward ─────────────────────────────────────────────────────────
+@app.post("/api/forward")
+async def forward_to_scoring(body: dict):
+    findings = body.get("findings", [])
+    if not findings:
+        raise HTTPException(400, "body must include a non-empty 'findings' list")
+
+    FORWARDABLE_STATUSES = {"open", "acknowledged"}
+    open_findings = [f for f in findings if f.get("status", "open") in FORWARDABLE_STATUSES]
+    if not open_findings:
+        raise HTTPException(400, "no open or acknowledged findings to forward — everything sent was won't-fix or false positive")
+    
+    finding_ids = [f["finding_id"] for f in open_findings if "finding_id" in f]
+    batch_hash = compute_batch_hash(finding_ids)
+    ids_are_reliable = len(finding_ids) == len(open_findings) == len(set(finding_ids))
+    redis_key = f"scoring:{batch_hash}"
+
+    if ids_are_reliable:
+        cached_raw = await redis_client.get(redis_key)
+        if cached_raw:
+            return {"score": json.loads(cached_raw), "cached": True, "cache_source": "redis", "forwarded_count": len(open_findings)}
+
+        db = get_session()
+        try:
+            cached = db.query(ScoringCache).filter_by(batch_hash=batch_hash).first()
+        finally:
+            db.close()
+        if cached:
+            await redis_client.set(redis_key, json.dumps(cached.score), ex=SCORING_TTL_SECONDS)
+            return {"score": cached.score, "cached": True, "cache_source": "postgres", "forwarded_count": len(open_findings)}
+        
+    by_severity: dict = {}
+    for f in open_findings:
+        sev = f.get("severity") or f.get("Severity") or "Unknown"
+        by_severity[sev] = by_severity.get(sev, 0) + 1
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        try:
+            score_r = await client.post(
+                f"{SCORING_URL}/score",
+                json={"findings": open_findings, "summary": {"by_severity": by_severity}},
+            )
+            score_r.raise_for_status()
+            score = score_r.json()
+        except httpx.ConnectError:
+            raise HTTPException(503, "scoring-service is not running")
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"scoring-service request failed: {e}")
+
+    db = get_session()
+    try:
+        db.add(ScoringCache(batch_hash=batch_hash, score=score, finding_count=len(open_findings)))
+        db.commit()
+    finally:
+        db.close()
+    await redis_client.set(redis_key, json.dumps(score), ex=SCORING_TTL_SECONDS)
+    return {"score": score, "cached": False, "cache_source": None, "forwarded_count": len(open_findings)}
+
+
 class FindingStatusUpdate(BaseModel):
     status: str            # "open" | "acknowledged" | "wont_fix" | "false_positive"
     note: str | None = None
@@ -263,9 +294,6 @@ VALID_FINDING_STATUSES = {"open", "acknowledged", "wont_fix", "false_positive"}
 
 
 # ── /api/findings/{finding_id}/status ───────────────────────────────────────
-# Frontend calls this when a user marks a finding as acknowledged, won't-fix,
-# or false-positive. Persists across rescans since it's keyed on finding_id,
-# not on any one scan.
 @app.patch("/api/findings/{finding_id}/status")
 async def update_finding_status(finding_id: str, body: FindingStatusUpdate):
     if body.status not in VALID_FINDING_STATUSES:
@@ -316,7 +344,6 @@ async def get_history():
 
 
 # ── /api/ai/explain ───────────────────────────────────────────────────────
-# React AI page sends findings, gateway forwards to ai-service → Gemini
 @app.post("/api/ai/explain")
 async def ai_explain(body: dict):
     async with httpx.AsyncClient(timeout=60) as client:
@@ -329,17 +356,45 @@ async def ai_explain(body: dict):
 
 
 # ── /api/ai/remediate ───────────────────────────────────────────────────────
-# Frontend sends one finding (already carries finding_id from /api/analyze).
-# Gateway calls ai-service, which internally branches on severity:
-#   Low/Medium    → explanation + inline YAML snippet
-#   High/Critical → full deployable YAML fix + independent validation
-# Result is cached by finding_id so the download endpoint doesn't need to
-# regenerate it, and so re-opening a finding shows the last generated fix.
+def _remediation_cache_to_dict(cache: RemediationCache) -> dict:
+    return {
+        "mode": cache.mode,
+        "explanation": cache.explanation,
+        "yaml_snippet": cache.yaml_snippet,
+        "yaml_fix": cache.yaml_fix,
+        "validated": cache.validated == "True",
+        "validation_notes": cache.validation_notes,
+    }
+
+
 @app.post("/api/ai/remediate")
 async def remediate(body: dict):
     finding = body.get("finding")
     if not finding or "finding_id" not in finding:
         raise HTTPException(400, "body must include a finding with a finding_id")
+
+    finding_id = finding["finding_id"]
+    redis_key = f"remediation:{finding_id}"
+
+    cached_raw = await redis_client.get(redis_key)
+    if cached_raw:
+        result = json.loads(cached_raw)
+        result["cached"] = True
+        result["cache_source"] = "redis"
+        return result
+
+    db = get_session()
+    try:
+        pg_cache = db.query(RemediationCache).filter_by(finding_id=finding_id).first()
+    finally:
+        db.close()
+
+    if pg_cache and pg_cache.explanation:
+        result = _remediation_cache_to_dict(pg_cache)
+        result["cached"] = True
+        result["cache_source"] = "postgres"
+        await redis_client.set(redis_key, json.dumps(result), ex=REMEDIATION_TTL_SECONDS)
+        return result
 
     async with httpx.AsyncClient(timeout=60) as client:
         try:
@@ -351,7 +406,6 @@ async def remediate(body: dict):
 
     db = get_session()
     try:
-        finding_id = finding["finding_id"]
         cache = db.query(RemediationCache).filter_by(finding_id=finding_id).first()
         if not cache:
             cache = RemediationCache(finding_id=finding_id)
@@ -367,12 +421,13 @@ async def remediate(body: dict):
     finally:
         db.close()
 
+    result["cached"] = False
+    await redis_client.set(redis_key, json.dumps(result), ex=REMEDIATION_TTL_SECONDS)
+
     return result
 
 
 # ── /api/ai/remediate/{finding_id}/download ─────────────────────────────────
-# Returns the last-generated YAML fix for a finding as a downloadable file.
-# Requires /api/ai/remediate to have been called for this finding at least once.
 @app.get("/api/ai/remediate/{finding_id}/download")
 async def download_remediation(finding_id: str):
     db = get_session()
@@ -418,10 +473,7 @@ async def _call_ai_chat(context: str, chat_history: list, message: str) -> str:
         except httpx.ConnectError:
             raise HTTPException(503, "ai-service is not running")
 
-
 # ── /api/ai/chat/finding ─────────────────────────────────────────────────────
-# Deep-dive chat scoped to one finding. Context = that finding's full detail.
-# History persists across requests, keyed on finding_id.
 @app.post("/api/ai/chat/finding")
 async def chat_finding(body: dict):
     finding = body.get("finding")
@@ -442,19 +494,33 @@ async def chat_finding(body: dict):
     db = get_session()
     try:
         history = _load_chat_history(db, "finding", finding_id)
+    finally:
+        db.close()
+
+    cached = False
+    if not history:
+        cache_key = _chat_cache_key("finding", finding_id, message)
+        cached_reply = await redis_client.get(cache_key)
+        if cached_reply:
+            reply = cached_reply
+            cached = True
+
+    if not cached:
         reply = await _call_ai_chat(context, history, message)
+        if not history:
+            cache_key = _chat_cache_key("finding", finding_id, message)
+            await redis_client.set(cache_key, reply, ex=REMEDIATION_TTL_SECONDS)
+
+    db = get_session()
+    try:
         _save_chat_turn(db, "finding", finding_id, "user", message)
         _save_chat_turn(db, "finding", finding_id, "assistant", reply)
     finally:
         db.close()
 
-    return {"reply": reply}
-
+    return {"reply": reply, "cached": cached}
 
 # ── /api/ai/chat/cluster ────────────────────────────────────────────────────
-# Cross-cutting chat scoped to the whole scan. Context = the scoring
-# summary the frontend already has (top priorities, risk score, grade) —
-# not the raw findings list, to keep every message's payload small.
 @app.post("/api/ai/chat/cluster")
 async def chat_cluster(body: dict):
     scan_id = body.get("scan_id")
@@ -477,17 +543,34 @@ async def chat_cluster(body: dict):
     db = get_session()
     try:
         history = _load_chat_history(db, "cluster", scan_id)
+    finally:
+        db.close()
+
+    cached = False
+    if not history:
+        cache_key = _chat_cache_key("cluster", scan_id, message)
+        cached_reply = await redis_client.get(cache_key)
+        if cached_reply:
+            reply = cached_reply
+            cached = True
+
+    if not cached:
         reply = await _call_ai_chat(context, history, message)
+        if not history:
+            cache_key = _chat_cache_key("cluster", scan_id, message)
+            await redis_client.set(cache_key, reply, ex=REMEDIATION_TTL_SECONDS)
+
+    db = get_session()
+    try:
         _save_chat_turn(db, "cluster", scan_id, "user", message)
         _save_chat_turn(db, "cluster", scan_id, "assistant", reply)
     finally:
         db.close()
 
-    return {"reply": reply}
+    return {"reply": reply, "cached": cached}
 
 
-# ── /api/health ───────────────────────────────────────────────────────────
-# Quick check — frontend can poll this to show cluster connectivity status
+# ── /api/health ────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health():
     statuses = {}
@@ -509,8 +592,6 @@ async def health():
 
 
 # ── Serve React build in production ──────────────────────────────────────
-# When deployed, the built React files sit in ../frontend/dist
-# The gateway serves them directly so only one pod is needed
 DIST = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(DIST):
     app.mount("/assets", StaticFiles(directory=os.path.join(DIST, "assets")), name="assets")
