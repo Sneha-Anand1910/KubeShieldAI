@@ -44,7 +44,7 @@ const ScoreGauge = ({ score }) => {
   )
 }
 
-export default function Score({ scanResult, onNav }) {
+export default function Score({ scanResult, onNav}) {
   if (!scanResult?.score) {
     return (
       <div style={{ padding: '32px 40px', animation: 'fade-up 0.3s ease' }}>
@@ -60,13 +60,33 @@ export default function Score({ scanResult, onNav }) {
   }
 
   const { score, findings } = scanResult
+  const forwardedFindings = scanResult.forwardedFindings || []
   const pieData = Object.entries(score.severity_counts || {}).map(([name, value]) => ({ name, value, color: SEV_COLORS[name] })).filter(d => d.value > 0)
   const moduleData = Object.entries(score.breakdown || {}).map(([name, v]) => ({ name, count: v.findings_count, fill: CHECK_COLORS[name] || 'var(--cyan)' }))
 
   return (
     <div style={{ padding: '32px 40px', overflow: 'auto', animation: 'fade-up 0.3s ease' }}>
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--cyan)', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 8 }}>03 · Scoring engine</div>
-      <h1 style={{ fontSize: 28, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 16 }}>Risk score</h1>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <h1 style={{ fontSize: 28, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>Risk score</h1>
+        <button
+          onClick={() => onNav('ai')}
+          disabled={forwardedFindings.length === 0}
+          style={{
+            padding: '8px 16px',
+            background: forwardedFindings.length === 0 ? 'var(--bg-card)' : 'var(--cyan)',
+            color: forwardedFindings.length === 0 ? 'var(--text-muted)' : 'var(--bg-base)',
+            border: forwardedFindings.length === 0 ? '1px solid var(--border)' : 'none',
+            borderRadius: 8,
+            fontWeight: 600,
+            fontSize: 12,
+            cursor: forwardedFindings.length === 0 ? 'default' : 'pointer',
+            fontFamily: 'var(--font-ui)',
+          }}
+        >
+          {`View ${forwardedFindings.length} finding${forwardedFindings.length === 1 ? '' : 's'} in AI service →`}
+        </button>
+      </div>
 
       {/* Self-explaining grade */}
       {score.explanation && (
