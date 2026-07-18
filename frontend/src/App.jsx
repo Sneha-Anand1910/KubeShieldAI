@@ -102,9 +102,16 @@ function Shell() {
   const handleScanComplete = (result) => {
     setScanResult(result)
     setPage('findings')
+  } 
+  const handleScoreReceived = (scoreData, forwardedFindings) => {
+    setScanResult(prev => prev ? { ...prev, score: scoreData.score, forwardedFindings } : prev)
+    setPage('score')
   }
-
-  const pageProps = { scanResult, onNav: setPage }
+  const pageProps = {
+    scanResult,
+    onNav: setPage,
+    onScoreReceived: handleScoreReceived,
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>

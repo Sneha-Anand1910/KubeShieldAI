@@ -55,7 +55,7 @@ const FindingChat = ({ finding }) => {
         }),
       })
       const data = await res.json()
-      setMessages(prev => [...prev, { role: 'assistant', content: data.reply || data.detail || 'No response' }])
+      setMessages(prev => [...prev, { role: 'assistant', content: data.reply || data.detail || 'No response', cached: data.cached }])
     } catch (e) {
       setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }])
     } finally {
@@ -73,10 +73,15 @@ const FindingChat = ({ finding }) => {
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+          <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start', gap: 4 }}>
             <div style={{ maxWidth: '85%', padding: '8px 12px', borderRadius: 8, fontSize: 12, lineHeight: 1.6, background: m.role === 'user' ? 'var(--cyan-dim)' : 'var(--bg-elevated)', color: m.role === 'user' ? 'var(--cyan)' : 'var(--text-secondary)', border: `1px solid ${m.role === 'user' ? 'var(--border-strong)' : 'var(--border)'}` }}>
               {m.content}
             </div>
+            {m.cached && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: 10 }}>
+                Cached from earlier
+              </span>
+            )}
           </div>
         ))}
         {loading && (
@@ -218,9 +223,9 @@ const FindingCard = ({ finding }) => {
                     <CheckCircle size={10} /> Verified by Gemini
                   </span>
                 )}
-                {remediation.validated === false && (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--coral)', background: 'rgba(255,77,109,0.1)', border: '1px solid rgba(255,77,109,0.3)', padding: '2px 8px', borderRadius: 10 }}>
-                    <AlertTriangle size={10} /> Review before applying
+                {remediation.cached && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-elevated)', border: '1px solid var(--border)', padding: '2px 8px', borderRadius: 10 }}>
+                    <Loader size={10} style={{ transform: 'rotate(0deg)' }} /> Cached from earlier
                   </span>
                 )}
               </div>
@@ -263,9 +268,17 @@ const FindingCard = ({ finding }) => {
 // ── Main AIAdvice page ────────────────────────────────────────────────────────
 export default function AIAdvice({ scanResult, onNav }) {
   const [filter, setFilter] = useState('All')
+  const rawAiFindings = scanResult?.forwardedFindings || []
+  const seen = new Set()
+  const aiFindings = rawAiFindings.filter(f => {
+    const key = f.finding_id || `${f.module}|${f.title}|${f.namespace}|${f.resource_name}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 
-  // No scan yet
-  if (!scanResult?.findings?.length) {
+  if (!aiFindings?.length) {
+    const hasScan = scanResult?.findings?.length > 0
     return (
       <div style={{ padding: '32px 40px', animation: 'fade-up 0.3s ease' }}>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--cyan)', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 8 }}>04 · AI recommendation engine</div>
@@ -275,19 +288,21 @@ export default function AIAdvice({ scanResult, onNav }) {
         </p>
         <div style={{ padding: '48px', textAlign: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)' }}>
           <Sparkles size={40} color="var(--text-muted)" style={{ marginBottom: 16 }} />
-          <div style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 16 }}>Run a scan first to get AI advice</div>
-          <button onClick={() => onNav('ingest')} style={{ padding: '10px 24px', background: 'var(--cyan)', color: '#080C14', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>Go to Ingest →</button>
+          <div style={{ fontSize: 15, color: 'var(--text-secondary)', marginBottom: 16 }}>
+            {hasScan ? 'Forward findings from the Score page first' : 'Run a scan first to get AI advice'}
+          </div>
+          <button onClick={() => onNav(hasScan ? 'score' : 'ingest')} style={{ padding: '10px 24px', background: 'var(--cyan)', color: '#080C14', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-ui)' }}>
+            {hasScan ? 'Go to Score →' : 'Go to Ingest →'}
+          </button>
         </div>
       </div>
     )
   }
 
-  // Severity counts
   const counts = { Critical: 0, High: 0, Medium: 0, Low: 0 }
-  scanResult.findings.forEach(f => { if (counts[f.severity] !== undefined) counts[f.severity]++ })
+  aiFindings.forEach(f => { if (counts[f.severity] !== undefined) counts[f.severity]++ })
 
-  // Filter + sort
-  const filtered = scanResult.findings
+  const filtered = aiFindings
     .filter(f => filter === 'All' || f.severity === filter)
     .sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9))
 
@@ -303,7 +318,7 @@ export default function AIAdvice({ scanResult, onNav }) {
       {/* Severity filter pills */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
         {['All', 'Critical', 'High', 'Medium', 'Low'].map(s => {
-          const count = s === 'All' ? scanResult.findings.length : counts[s]
+          const count = s === 'All' ? aiFindings.length : counts[s]
           if (s !== 'All' && count === 0) return null
           return (
             <button
@@ -320,7 +335,7 @@ export default function AIAdvice({ scanResult, onNav }) {
       {/* Finding cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {filtered.map((f, i) => (
-          <FindingCard key={f.id || i} finding={f} />
+          <FindingCard key={f.finding_id || `${f.module}-${f.title}-${f.namespace}-${f.resource_name}-${i}`} finding={f} />
         ))}
       </div>
 

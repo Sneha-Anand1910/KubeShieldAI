@@ -116,12 +116,6 @@ const DetailPanel = ({ f, onClose, onUpdateStatus }) => {
         <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{f.evidence || '—'}</div>
       </div>
       <div>
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>Remediation</div>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--amber)', background: 'var(--amber-dim)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 6, padding: '10px 12px', lineHeight: 1.6 }}>
-          {f.remediation_hint || 'No remediation hint provided.'}
-        </div>
-      </div>
-      <div>
         <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>Module</div>
         <span style={{ padding: '3px 10px', borderRadius: 4, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--cyan)', background: 'var(--cyan-dim)', border: '1px solid var(--border)' }}>{f.module}</span>
       </div>
@@ -133,12 +127,19 @@ const DetailPanel = ({ f, onClose, onUpdateStatus }) => {
       {/* ── AI remediation ─────────────────────────────────────────── */}
       <div>
         <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>AI remediation</div>
-        {!remediation && (
+        {!isForwarded && (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6, fontStyle: 'italic' }}>
+            {f.status !== 'open'
+              ? "This finding is marked as not-open, so it won't be forwarded for AI remediation."
+              : 'Forward this finding to scoring service first — AI remediation only runs on findings that made it through scoring.'}
+          </div>
+        )}
+        {isForwarded && !remediation && (
           <button onClick={generateRemediation} disabled={loadingFix} style={{ padding: '8px 14px', background: 'var(--cyan)', color: 'var(--bg-base)', border: 'none', borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: loadingFix ? 'default' : 'pointer', opacity: loadingFix ? 0.6 : 1, fontFamily: 'var(--font-ui)' }}>
             {loadingFix ? 'Generating…' : 'Generate fix'}
           </button>
         )}
-        {remediation && (
+        {isForwarded && remediation && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{remediation.explanation}</div>
 
@@ -218,12 +219,38 @@ const DetailPanel = ({ f, onClose, onUpdateStatus }) => {
   )
 }
 
-export default function Findings({ scanResult, onNav }) {
+export default function Findings({ scanResult, onNav, onScoreReceived }) {
   const [filter, setFilter] = useState('all')
   const [selected, setSelected] = useState(null)
   const [statusOverrides, setStatusOverrides] = useState({})
   const [hideResolved, setHideResolved] = useState(false)
   const [statusFilter, setStatusFilter] = useState('all')
+  const [forwarding, setForwarding] = useState(false)
+  const [forwardResult, setForwardResult] = useState(null)
+  const [forwardedIds, setForwardedIds] = useState(new Set())
+
+  async function forwardToScoring(openFindingsList) {
+    setForwarding(true)
+    setForwardResult(null)
+    try {
+      const res = await fetch('/api/forward', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ findings: openFindingsList }),
+      })
+      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+      const data = await res.json()
+      const ids = openFindingsList.map(f => f.finding_id)
+      setForwardedIds(prev => new Set([...prev, ...ids]))
+      setForwardResult({ ok: true, count: data.forwarded_count ?? openFindingsList.length, cached: data.cached })
+      if (onScoreReceived) onScoreReceived(data, openFindingsList)
+      else if (onNav) onNav('score')
+    } catch (e) {
+      setForwardResult({ ok: false, error: 'Failed to forward — is scoring-service running?' })
+    } finally {
+      setForwarding(false)
+    }
+  }
 
   async function updateStatus(findingId, status) {
     // Update immediately in the UI, then persist — don't block on the network
@@ -270,13 +297,13 @@ export default function Findings({ scanResult, onNav }) {
 
   const counts = { Critical: 0, High: 0, Medium: 0, Low: 0 }
   findings.forEach(f => { if (counts[f.severity] !== undefined) counts[f.severity]++ })
-
+  
   const statusCounts = { all: findings.length, open: 0, acknowledged: 0, wont_fix: 0, false_positive: 0 }
   findings.forEach(f => { if (statusCounts[f.status] !== undefined) statusCounts[f.status]++ })
 
-  // "Extracted from cluster" context strip — only renders if the ingestion
-  // summary was actually passed through in scanResult. See note below the
-  // component about wiring this up if it's not showing yet.
+  const FORWARDABLE_STATUSES = ['open', 'acknowledged']
+  const openFindings = findings.filter(f => FORWARDABLE_STATUSES.includes(f.status))
+
   const summary = scanResult.summary
 
   return (
@@ -295,14 +322,50 @@ export default function Findings({ scanResult, onNav }) {
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 16, marginBottom: 24 }}>
+          <div style={{ display: 'flex', gap: 10, marginTop: 16, marginBottom: 24, alignItems: 'center', flexWrap: 'wrap' }}>
             {Object.entries(counts).map(([sev, n]) => (
               <div key={sev} style={{ padding: '6px 14px', borderRadius: 'var(--radius-md)', background: `${SEV_COLORS[sev]}18`, border: `1px solid ${SEV_COLORS[sev]}40`, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 16, color: SEV_COLORS[sev] }}>{n}</span>
                 <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{sev}</span>
               </div>
             ))}
-          </div>
+            <div style={{ flex: 1 }} />
+            <button
+              onClick={() => forwardToScoring(openFindings)}
+              disabled={forwarding || openFindings.length === 0}
+              style={{
+                padding: '8px 16px',
+                background: openFindings.length === 0 ? 'var(--bg-card)' : 'var(--cyan)',
+                color: openFindings.length === 0 ? 'var(--text-muted)' : 'var(--bg-base)',
+                border: openFindings.length === 0 ? '1px solid var(--border)' : 'none',
+                borderRadius: 8,
+                fontWeight: 600,
+                fontSize: 12,
+                cursor: forwarding || openFindings.length === 0 ? 'default' : 'pointer',
+                opacity: forwarding ? 0.6 : 1,
+                fontFamily: 'var(--font-ui)',
+              }}
+            >
+             {forwarding ? 'Forwarding…' : `Forward ${openFindings.length} open/acknowledged finding${openFindings.length === 1 ? '' : 's'} to scoring service →`}
+          </button>
+        </div>
+
+          {forwardResult && (
+            <div style={{
+              marginBottom: 20,
+              padding: '10px 14px',
+              borderRadius: 8,
+              fontSize: 12,
+              background: forwardResult.ok ? 'var(--green-dim)' : 'var(--amber-dim)',
+              color: forwardResult.ok ? 'var(--green)' : 'var(--amber)',
+              border: `1px solid ${forwardResult.ok ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)'}`,
+            }}>
+              {forwardResult.ok
+                ? `Forwarded ${forwardResult.count} finding${forwardResult.count === 1 ? '' : 's'} to scoring service${forwardResult.cached ? ' (served from cache)' : ''}.`
+                : forwardResult.error}
+            </div>
+          )}
+
 
           <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', paddingBottom: 0, alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', gap: 4 }}>
@@ -318,7 +381,6 @@ export default function Findings({ scanResult, onNav }) {
             </label>
           </div>
 
-          {/* Status filter — view findings by review status (e.g. jump to False positive to un-flag one) */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 12 }}>
             <span style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginRight: 4 }}>Status</span>
             {STATUS_FILTERS.map(s => (
@@ -362,7 +424,7 @@ export default function Findings({ scanResult, onNav }) {
           {filtered.length === 0 && <div style={{ padding: '48px', textAlign: 'center', color: 'var(--text-muted)' }}>No findings for this filter.</div>}
         </div>
       </div>
-      {selected && <DetailPanel f={selected} onClose={() => setSelected(null)} onUpdateStatus={updateStatus} />}
+      {selected && <DetailPanel f={selected} onClose={() => setSelected(null)} onUpdateStatus={updateStatus} isForwarded={forwardedIds.has(selected.finding_id)} />}
     </div>
   )
 }
