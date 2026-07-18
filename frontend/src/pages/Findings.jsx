@@ -25,7 +25,7 @@ const STATUS_FILTERS = [
   { value: 'false_positive', label: 'False positive' },
 ]
 
-const DetailPanel = ({ f, onClose, onUpdateStatus }) => {
+const DetailPanel = ({ f, onClose, onUpdateStatus, isForwarded }) => {
   const [remediation, setRemediation] = useState(null)
   const [loadingFix, setLoadingFix] = useState(false)
   const [chatMessages, setChatMessages] = useState([])
