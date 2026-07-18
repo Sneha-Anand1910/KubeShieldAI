@@ -372,6 +372,26 @@ async def remediate(body: dict):
     finding = body.get("finding")
     if not finding or "finding_id" not in finding:
         raise HTTPException(400, "body must include a finding with a finding_id")
+    finding_id = finding["finding_id"]
+
+    # ── CACHE READ: if we already generated this fix, return it instantly ──
+    # (no Gemini call → no tokens, no wait, no rate-limit risk). Shared across
+    # the whole team since Postgres is a shared Neon instance.
+    db = get_session()
+    try:
+        cached = db.query(RemediationCache).filter_by(finding_id=finding_id).first()
+        if cached and (cached.yaml_fix or cached.yaml_snippet):
+            return {
+                "mode":             cached.mode,
+                "explanation":      cached.explanation,
+                "yaml_snippet":     cached.yaml_snippet,
+                "yaml_fix":         cached.yaml_fix,
+                "validated":        cached.validated == "True",
+                "validation_notes": cached.validation_notes,
+                "cached":           True,
+            }
+    finally:
+        db.close()
 
     finding_id = finding["finding_id"]
     redis_key = f"remediation:{finding_id}"

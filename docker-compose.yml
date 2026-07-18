@@ -64,6 +64,8 @@ services:
       - SCORING_SERVICE_URL=http://scoring-service:8001
       - AI_SERVICE_URL=http://ai-service:8000
       - INGESTION_SERVICE_URL=http://ingestion-service:8001
+      # Shared Neon cloud Postgres — the value comes from your .env (DATABASE_URL=...)
+      - DATABASE_URL=${DATABASE_URL}
     depends_on:
       - security-service
       - scoring-service

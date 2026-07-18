@@ -17,6 +17,14 @@ const STATUS_LABELS = {
   false_positive: 'False positive',
 }
 
+const STATUS_FILTERS = [
+  { value: 'all',            label: 'All' },
+  { value: 'open',           label: 'Open' },
+  { value: 'acknowledged',   label: 'Acknowledged' },
+  { value: 'wont_fix',       label: "Won't fix" },
+  { value: 'false_positive', label: 'False positive' },
+]
+
 const DetailPanel = ({ f, onClose, onUpdateStatus }) => {
   const [remediation, setRemediation] = useState(null)
   const [loadingFix, setLoadingFix] = useState(false)
@@ -215,6 +223,7 @@ export default function Findings({ scanResult, onNav }) {
   const [selected, setSelected] = useState(null)
   const [statusOverrides, setStatusOverrides] = useState({})
   const [hideResolved, setHideResolved] = useState(false)
+  const [statusFilter, setStatusFilter] = useState('all')
 
   async function updateStatus(findingId, status) {
     // Update immediately in the UI, then persist — don't block on the network
@@ -255,11 +264,15 @@ export default function Findings({ scanResult, onNav }) {
   const filters = ['all', 'Critical', 'High', 'Medium', 'Low']
   const filtered = [...findings]
     .filter(f => filter === 'all' || f.severity === filter)
+    .filter(f => statusFilter === 'all' || f.status === statusFilter)
     .filter(f => !hideResolved || f.status === 'open')
     .sort((a, b) => (SEV_ORDER[a.severity] ?? 99) - (SEV_ORDER[b.severity] ?? 99))
 
   const counts = { Critical: 0, High: 0, Medium: 0, Low: 0 }
   findings.forEach(f => { if (counts[f.severity] !== undefined) counts[f.severity]++ })
+
+  const statusCounts = { all: findings.length, open: 0, acknowledged: 0, wont_fix: 0, false_positive: 0 }
+  findings.forEach(f => { if (statusCounts[f.status] !== undefined) statusCounts[f.status]++ })
 
   // "Extracted from cluster" context strip — only renders if the ingestion
   // summary was actually passed through in scanResult. See note below the
@@ -303,6 +316,21 @@ export default function Findings({ scanResult, onNav }) {
               <input type="checkbox" checked={hideResolved} onChange={e => setHideResolved(e.target.checked)} />
               Hide acknowledged / won't-fix / false positive
             </label>
+          </div>
+
+          {/* Status filter — view findings by review status (e.g. jump to False positive to un-flag one) */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 12 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginRight: 4 }}>Status</span>
+            {STATUS_FILTERS.map(s => (
+              <button key={s.value} onClick={() => setStatusFilter(s.value)} style={{
+                padding: '4px 10px', borderRadius: 99, fontSize: 11, fontFamily: 'var(--font-ui)', cursor: 'pointer',
+                border: statusFilter === s.value ? '1px solid var(--cyan)' : '1px solid var(--border)',
+                background: statusFilter === s.value ? 'var(--cyan-glow)' : 'transparent',
+                color: statusFilter === s.value ? 'var(--cyan)' : 'var(--text-muted)',
+              }}>
+                {s.label} ({statusCounts[s.value] ?? 0})
+              </button>
+            ))}
           </div>
         </div>
 
