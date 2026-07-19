@@ -236,7 +236,7 @@ export default function Findings({ scanResult, onNav, onScoreReceived }) {
       const res = await fetch('/api/forward', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ findings: openFindingsList }),
+        body: JSON.stringify({ findings: openFindingsList, scan_id: scanResult.scan_id }),
       })
       if (!res.ok) throw new Error(`Server returned ${res.status}`)
       const data = await res.json()
