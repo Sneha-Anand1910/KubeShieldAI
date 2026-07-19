@@ -1,25 +1,3 @@
-"""
-scoring-service/app.py
-======================
-KubeShield Scoring Engine.
-
-Pipeline (matches the architecture diagram):
-
-    Findings
-       │
-       ▼  1. Dedupe + Blast Radius   -> collapse identical issues, remember spread
-       ▼  2. Weighted Severity        -> base points per distinct issue
-       ▼  3. Raw Risk Calculation     -> severity × sensitivity × breadth  (+ attack chains)
-       ▼  4. Normalize (Soft Cap)     -> 0–100, e^ curve so big clusters don't all pin to 100
-       ▼  5. Grade (A+ … F)
-       ▼  Explanation + Attack Paths  -> the score explains itself
-
-Why dedupe: a Deployment with 185 replicas reports the SAME misconfig 185 times.
-That is one real problem, not 185. We count it once (full weight) and use the
-count only as a small "how widespread" nudge — so the score reflects distinct
-problems, weighted by where they live and whether they chain into an attack path.
-"""
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -27,8 +5,11 @@ from typing import Any
 import math
 import re
 import uvicorn
+from prometheus_fastapi_instrumentator import Instrumentator
+
 
 app = FastAPI(title="KubeShield Scoring Service")
+Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,17 +24,11 @@ class FindingsInput(BaseModel):
     findings: list[dict[str, Any]]
     summary: dict[str, Any] = {}
 
-
-# ══════════════════════════════════════════════════════════════════════════════
 # CALIBRATION CONSTANTS
-# ══════════════════════════════════════════════════════════════════════════════
-
-# 1. Base points per severity (your spec)
 SEVERITY_WEIGHTS = {"Critical": 10, "High": 7, "Medium": 4, "Low": 1}
 SEVERITY_ORDER   = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 
 # 2. Sensitivity multiplier — WHERE the problem lives matters, not just how bad.
-#    RBAC / Secrets are "keys to the kingdom".
 CATEGORY_WEIGHTS = {
     "Pod Security":     1.0,
     "Network":          1.1,
@@ -62,8 +37,6 @@ CATEGORY_WEIGHTS = {
 }
 
 # 3. Breadth (blast radius): 1 + BREADTH_K * log10(affected_count)
-#    1 pod -> ×1.00 | 10 -> ×1.50 | 100 -> ×2.00 | 185 -> ×2.13
-#    Log-scaled so 185 replicas boost the score a little, never 185×.
 BREADTH_K = 0.5
 
 # 4. Attack-chain boost: each detected attack path adds +CHAIN_STEP, capped.
@@ -94,12 +67,7 @@ CATEGORY_FROM_MODULE = {
     "service exposure": "Network",
 }
 
-
-# ══════════════════════════════════════════════════════════════════════════════
 # SCHEMA-TOLERANT FIELD ACCESSORS
-# Findings may arrive as Schema A (severity/title/module/resource_name) or
-# Schema B (Severity/Issue/check/resource). These read either.
-# ══════════════════════════════════════════════════════════════════════════════
 
 def _first(f: dict, *keys, default=""):
     for k in keys:
@@ -127,11 +95,7 @@ def f_namespace(f: dict) -> str:
 def f_reco(f: dict) -> str:
     return _first(f, "Recommendation", "remediation_hint", "recommendation")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
 # STAGE 1 — DEDUPE + BLAST RADIUS
-# ══════════════════════════════════════════════════════════════════════════════
-
 _QUOTED = re.compile(r"['\"][^'\"]*['\"]")   # strip 'names' inside titles
 _DIGITS = re.compile(r"\d+")
 
@@ -185,13 +149,7 @@ def breadth_factor(count: int) -> float:
         return 1.0
     return 1.0 + BREADTH_K * math.log10(count)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
 # STAGE 3b — ATTACK-CHAIN DETECTION
-# Approximate (findings carry limited linkage): correlate capabilities per
-# namespace. When ingredients of a known attack path co-occur, boost the score.
-# ══════════════════════════════════════════════════════════════════════════════
-
 def detect_attack_paths(groups: list[dict]) -> list[dict]:
     """Return a list of detected attack paths: {name, why, namespace}."""
     # Which capabilities appear in each namespace
@@ -235,10 +193,7 @@ def detect_attack_paths(groups: list[dict]) -> list[dict]:
         for name, ns_set in scopes.items()
     ]
 
-
-# ══════════════════════════════════════════════════════════════════════════════
 # STAGE 4 — GRADE
-# ══════════════════════════════════════════════════════════════════════════════
 
 def score_to_grade(score: int) -> tuple[str, str]:
     if score <= 10:  return "A+", "Secure"
@@ -254,10 +209,7 @@ BADGE_COLORS = {
     "D": "#f97316",  "E": "#ea580c", "F": "#dc2626",
 }
 
-
-# ══════════════════════════════════════════════════════════════════════════════
 # MAIN SCORING
-# ══════════════════════════════════════════════════════════════════════════════
 
 def compute(findings: list[dict]) -> dict:
     groups = group_findings(findings)
@@ -355,11 +307,7 @@ def build_explanation(res: dict, total_findings: int, counts: dict) -> str:
         msg += "."
     return msg
 
-
-# ══════════════════════════════════════════════════════════════════════════════
 # ENDPOINT
-# ══════════════════════════════════════════════════════════════════════════════
-
 @app.post("/score")
 def score(body: FindingsInput):
     findings = body.findings

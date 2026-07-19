@@ -1,28 +1,3 @@
-"""
-security-service/app.py
-========================
-FastAPI entry point for the KubeShield security-service.
-Connects to a LIVE Kubernetes cluster via kubeconfig and runs
-all analyzer modules (RBAC, Pod, Secret, Network) against real cluster state.
-
-THIS IS THE SINGLE SOURCE OF TRUTH FOR THE CONTRACT.
-All analyzers must:
-    1. Accept a live Kubernetes API client (CoreV1Api, RbacAuthorizationV1Api, etc.)
-    2. Return list[Finding] using models.findings.Finding / make_finding
-    3. NOT accept pre-parsed YAML dicts — we scan the live cluster, not static files
-
-How to run locally:
-    pip install -r requirements.txt
-    uvicorn app:app --reload --port 8003
-
-How to test:
-    curl -X POST http://localhost:8003/analyze \
-      -H "Content-Type: application/json" \
-      -d '{"kubeconfig_content": "<paste kubeconfig here>"}'
-
-    Or open http://localhost:8003/docs for Swagger UI
-"""
-
 import os
 import tempfile
 import logging
@@ -32,17 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from models.findings import Finding
 
 # ── Analyzer imports ─────────────────────────────────────────────────────
-# Every analyzer must expose a function analyze(...) that:
-#   - takes the relevant Kubernetes API client(s)
-#   - returns list[Finding]
 from analyzers.rbac.analyzer import analyze_rbac
 from analyzers.pod.analyzer import analyze_pod
-
-
 from analyzers.secret.analyzer  import analyze as analyze_secret
 from analyzers.network.analyzer import analyze_network
 
@@ -54,6 +25,7 @@ app = FastAPI(
     description="Live Kubernetes cluster security analysis — RBAC, Pod, Secret, Network",
     version="1.0.0",
 )
+Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -63,31 +35,12 @@ app.add_middleware(
 )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
 # REQUEST SCHEMA
-# ═══════════════════════════════════════════════════════════════════════════
-
 class AnalyzeRequest(BaseModel):
-    # Optional: if omitted, security uses the kubeconfig mounted into the
-    # container (or an in-cluster ServiceAccount) to scan the live cluster.
     kubeconfig_content: Optional[str] = None
 
-
-# ═══════════════════════════════════════════════════════════════════════════
 # KUBERNETES CLIENT LOADER
-# ═══════════════════════════════════════════════════════════════════════════
-
 def load_clients(kubeconfig_str: Optional[str] = None):
-    """
-    Build Kubernetes API clients.
-
-    - If kubeconfig_str is provided, write it to a temp file, load it, delete it
-      immediately (never persisted beyond this call).
-    - Otherwise use the kubeconfig mounted into the container at ~/.kube/config
-      (or an in-cluster ServiceAccount when running as a pod).
-
-    Returns (CoreV1Api, RbacAuthorizationV1Api, NetworkingV1Api)
-    """
     if kubeconfig_str:
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".yaml", delete=False
@@ -124,11 +77,7 @@ def get_cluster_info(v1: client.CoreV1Api) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-
-# ═══════════════════════════════════════════════════════════════════════════
 # HELPERS
-# ═══════════════════════════════════════════════════════════════════════════
-
 def summarize(findings: list[Finding]) -> dict:
     """Build the by_severity and by_module breakdown from a list of Finding objects."""
     by_severity = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
@@ -140,11 +89,7 @@ def summarize(findings: list[Finding]) -> dict:
 
     return {"by_severity": by_severity, "by_module": by_module}
 
-
-# ═══════════════════════════════════════════════════════════════════════════
 # ROUTES
-# ═══════════════════════════════════════════════════════════════════════════
-
 @app.get("/")
 def root():
     return {

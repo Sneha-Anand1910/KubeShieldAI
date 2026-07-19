@@ -12,6 +12,8 @@ import google.generativeai as genai
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from prometheus_fastapi_instrumentator import Instrumentator
+
 
 load_dotenv()
 
@@ -31,6 +33,7 @@ app = FastAPI(
     description="LLM-powered remediation explanation for Kubernetes security findings",
     version="1.0.0",
 )
+Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,

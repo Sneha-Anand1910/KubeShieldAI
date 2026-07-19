@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
+from prometheus_fastapi_instrumentator import Instrumentator 
 import httpx
 import os
 import json
@@ -13,6 +14,7 @@ from redis_client import redis_client, REMEDIATION_TTL_SECONDS, SCORING_TTL_SECO
 from db import init_db, get_session, ScanHistory, FindingState, ChatMessage, RemediationCache, ScoringCache
 
 app = FastAPI(title="KubeShield Gateway")
+Instrumentator().instrument(app).expose(app)
 
 @app.on_event("startup")
 def on_startup():
