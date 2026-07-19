@@ -23,5 +23,12 @@ def analyze_rbac(rbac_v1: RbacAuthorizationV1Api) -> list[Finding]:
         ("Default service account check",  default_sa),
     ]
 
+    for check_name, module in checks:
+        try:
+            result = module.check(rbac_v1)
+            findings.extend(result)
+        except Exception:
+            logger.exception(f"{check_name} failed")
+
     findings.sort(key=lambda f: -f.score)
     return findings

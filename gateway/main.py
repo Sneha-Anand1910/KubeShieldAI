@@ -516,6 +516,12 @@ async def _call_ai_chat(context: str, chat_history: list, message: str) -> str:
         except httpx.ConnectError:
             raise HTTPException(503, "ai-service is not running")
 
+
+def _chat_cache_key(scope_type: str, scope_id: str, message: str) -> str:
+    normalized = message.strip().lower()
+    msg_hash = hashlib.sha256(normalized.encode()).hexdigest()[:16]
+    return f"chat:{scope_type}:{scope_id}:{msg_hash}"
+
 # ── /api/ai/chat/finding ─────────────────────────────────────────────────────
 @app.post("/api/ai/chat/finding")
 async def chat_finding(body: dict):
