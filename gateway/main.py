@@ -171,14 +171,11 @@ async def analyze(body: dict):
 
     result = sec_r.json()
 
-    # Normalize every finding so the UI, scoring, AI, and finding_id all agree
     findings     = [normalize_finding(f) for f in result.get("findings", [])]
     by_severity  = result.get("by_severity") or {}
     by_module    = result.get("by_module") or {}
     cluster_info = result.get("cluster_info") or {}
 
-    # Attach a stable finding_id + any persisted status (acknowledged /
-    # won't fix / false positive) to each finding.
     db = get_session()
     try:
         for f in findings:
@@ -192,6 +189,7 @@ async def analyze(body: dict):
     score: dict = {"risk_score": None}
 
     # ── Persist this scan to history ──────────────────────────────────────
+    scan_id = None
     db = get_session()
     entry = ScanHistory(
         resource_count=len(findings),
@@ -202,12 +200,15 @@ async def analyze(body: dict):
         by_severity=by_severity,
         by_module=by_module,
         created_by=scanned_by,
-    )
+    ) 
     db.add(entry)
     db.commit()
+    db.refresh(entry)       
+    scan_id = entry.id
     db.close()
 
     return {
+        "scan_id":      scan_id,
         "findings":     findings,
         "cluster_info": cluster_info,
         "total_issues": len(findings),
@@ -220,16 +221,28 @@ async def analyze(body: dict):
 
 
 def compute_batch_hash(finding_ids: list[str]) -> str:
-    """Stable hash of a forwarded set of finding_ids, regardless of order —
-    lets us cache scoring results for a batch that's been forwarded before."""
     raw = ",".join(sorted(finding_ids))
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+def _update_scan_history_score(scan_id, score: dict):
+    if scan_id is None:
+        return
+    db = get_session()
+    try:
+        entry = db.query(ScanHistory).filter_by(id=scan_id).first()
+        if entry:
+            entry.risk_score = score.get("risk_score")
+            entry.grade = score.get("grade")
+            db.commit()
+    finally:
+        db.close()
 
 
 # ── /api/forward ─────────────────────────────────────────────────────────
 @app.post("/api/forward")
 async def forward_to_scoring(body: dict):
     findings = body.get("findings", [])
+    scan_id = body.get("scan_id") 
     if not findings:
         raise HTTPException(400, "body must include a non-empty 'findings' list")
 
@@ -246,6 +259,8 @@ async def forward_to_scoring(body: dict):
     if ids_are_reliable:
         cached_raw = await redis_client.get(redis_key)
         if cached_raw:
+            cached_score = json.loads(cached_raw)
+            _update_scan_history_score(scan_id, cached_score) 
             return {"score": json.loads(cached_raw), "cached": True, "cache_source": "redis", "forwarded_count": len(open_findings)}
 
         db = get_session()
@@ -255,6 +270,7 @@ async def forward_to_scoring(body: dict):
             db.close()
         if cached:
             await redis_client.set(redis_key, json.dumps(cached.score), ex=SCORING_TTL_SECONDS)
+            _update_scan_history_score(scan_id, cached.score) 
             return {"score": cached.score, "cached": True, "cache_source": "postgres", "forwarded_count": len(open_findings)}
         
     by_severity: dict = {}
@@ -277,11 +293,19 @@ async def forward_to_scoring(body: dict):
 
     db = get_session()
     try:
-        db.add(ScoringCache(batch_hash=batch_hash, score=score, finding_count=len(open_findings)))
+        existing = db.query(ScoringCache).filter_by(batch_hash=batch_hash).first()
+        if existing:
+            existing.score = score
+            existing.finding_count = len(open_findings)
+        else:
+            db.add(ScoringCache(batch_hash=batch_hash, score=score, finding_count=len(open_findings)))
         db.commit()
     finally:
         db.close()
+
     await redis_client.set(redis_key, json.dumps(score), ex=SCORING_TTL_SECONDS)
+    _update_scan_history_score(scan_id, score) 
+
     return {"score": score, "cached": False, "cache_source": None, "forwarded_count": len(open_findings)}
 
 
@@ -374,9 +398,6 @@ async def remediate(body: dict):
         raise HTTPException(400, "body must include a finding with a finding_id")
     finding_id = finding["finding_id"]
 
-    # ── CACHE READ: if we already generated this fix, return it instantly ──
-    # (no Gemini call → no tokens, no wait, no rate-limit risk). Shared across
-    # the whole team since Postgres is a shared Neon instance.
     db = get_session()
     try:
         cached = db.query(RemediationCache).filter_by(finding_id=finding_id).first()
