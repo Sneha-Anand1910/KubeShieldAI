@@ -18,8 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import yaml
 import os
+from prometheus_fastapi_instrumentator import Instrumentator
+
 
 app = FastAPI(title="KubeShield Ingestion Service")
+Instrumentator().instrument(app).expose(app)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 

@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "kubeshield-gateway"
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+
+  - job_name: "kubeshield-security"
+    static_configs:
+      - targets: ["host.docker.internal:8002"]
+
+  - job_name: "kubeshield-scoring"
+    static_configs:
+      - targets: ["host.docker.internal:8003"]
+
+  - job_name: "kubeshield-ai"
+    static_configs:
+      - targets: ["host.docker.internal:8004"]
