@@ -6,6 +6,33 @@ const scoreColor = (s) => s > 70 ? 'var(--coral)' : s > 40 ? 'var(--amber)' : 'v
 export default function History() {
   const [history, setHistory] = useState([])
 
+  const toCsvRow = (cells) => cells.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')
+
+  const downloadScan = (s) => {
+    const report = {
+      scan_id: s.id,
+      timestamp: s.timestamp,
+      status: s.status,
+      grade: s.grade,
+      risk_score: s.score,
+      resources_scanned: s.resources,
+      total_findings: s.findings,
+      findings_by_severity: s.by_severity || {},
+      findings_by_module: s.by_module || {},
+      scanned_by: s.created_by || 'unknown',
+    }
+
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${s.id}-report.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   useEffect(() => {
     fetch('/api/history')
       .then(r => r.json())
@@ -51,7 +78,13 @@ export default function History() {
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 18, fontWeight: 600, color: scoreColor(s.score) }}>{s.score}</div>
               <span style={{ padding: '3px 8px', borderRadius: 4, fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--green)', background: 'var(--green-dim)', border: '1px solid rgba(16,185,129,0.2)' }}>{s.status}</span>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><Download size={14} /></button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); downloadScan(s) }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}
+                  title="Download this scan's report"
+                >
+                  <Download size={14} />
+                </button>
                 <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><ChevronRight size={14} /></button>
               </div>
             </div>
